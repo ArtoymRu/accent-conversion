@@ -1,0 +1,20 @@
+# Sparse Autoencoder training (align with AudioSAE when available)
+features_dir: "outputs/features"
+checkpoints_dir: "outputs/checkpoints"
+
+# SAE hyperparameters (from AudioSAE paper: batch-top-k, 8x expansion, k=50)
+sparsity_coefficient: 0.01
+dictionary_size: 2048   # latent dim * expansion_factor often
+expansion_factor: 8
+sparsity_top_k: 50
+
+# Training
+batch_size: 64
+learning_rate: 0.001
+max_steps: 100000
+
+# Per-layer SAE names for HuBERT
+sae_names:
+  hubert_layer6: "hubert_layer6_sae"
+  hubert_layer9: "hubert_layer9_sae"
+  hubert_layer12: "hubert_layer12_sae"

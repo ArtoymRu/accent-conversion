@@ -1,0 +1,29 @@
+# Data (large/generated)
+data/l2_arctic/
+outputs/*
+!outputs/README.md
+checkpoints/
+*.pt
+*.npy
+*.pth
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.env
+.env.*
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db

@@ -1,0 +1,14 @@
+# Paths (relative to project root or absolute)
+data_root: "data/l2_arctic"
+
+accent_dirs:
+  - arabic
+  - hindi
+  - korean
+  - mandarin
+  - spanish
+  - vietnamese
+
+# L2-ARCTIC wav is 44.1 kHz; resample for HuBERT (16 kHz) in loader if needed
+sample_rate: 16000
+target_sample_rate: 16000

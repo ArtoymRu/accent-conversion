@@ -1,0 +1,13 @@
+# Feature extraction config
+model: "hubert"  # hubert | encodec | wavlm
+hubert_model: "facebook/hubert-base-ls960"
+
+# Layers to extract (HuBERT: 0..11 for base)
+layers: [6, 9, 12]
+
+# Output
+features_dir: "outputs/features"
+# Subdirs: {model}_layer{N}/ or encodec/, wavlm/
+
+batch_size: 8
+device: "cuda"  # cuda | cpu
