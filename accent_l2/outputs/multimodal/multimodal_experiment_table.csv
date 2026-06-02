@@ -1,0 +1,6 @@
+model,test_accuracy,test_f1,best_val_f1
+AudioOnly_LogReg,0.3822,0.3648,-
+TextOnly_LogReg,0.1662,0.1648,-
+early_fusion,0.4475,0.433,0.9997
+late_fusion,0.4435,0.413,0.9985
+cross_attention,0.4375,0.4098,0.9985

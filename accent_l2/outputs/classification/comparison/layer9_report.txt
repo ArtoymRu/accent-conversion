@@ -1,0 +1,8 @@
+HuBERT Layer 9 — Accent Classification
+============================================================
+LogReg (L2)                          acc=0.9808  f1=0.9808
+SVM (RBF)                            acc=0.9885  f1=0.9884
+Random Forest                        acc=0.9118  f1=0.9109
+Hist Grad. Boost                     acc=0.9630  f1=0.9628
+KNN (k=5)                            acc=0.4721  f1=0.4797
+MLP (512-256)                        acc=0.9922  f1=0.9922

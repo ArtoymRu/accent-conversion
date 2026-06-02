@@ -1,0 +1,14 @@
+Layer 12 | Accuracy=0.9968 | F1-macro=0.9968
+
+              precision    recall  f1-score   support
+
+      arabic     0.9966    0.9977    0.9971       873
+    mandarin     0.9956    0.9956    0.9956       905
+       hindi     1.0000    0.9989    0.9994       905
+      korean     0.9945    0.9967    0.9956       905
+     spanish     0.9954    0.9943    0.9949       880
+  vietnamese     0.9989    0.9978    0.9983       906
+
+    accuracy                         0.9968      5374
+   macro avg     0.9968    0.9968    0.9968      5374
+weighted avg     0.9968    0.9968    0.9968      5374

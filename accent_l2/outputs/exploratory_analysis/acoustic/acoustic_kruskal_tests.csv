@@ -1,0 +1,7 @@
+metric,H_stat,p_value,sig
+f0_mean,32.035,1e-05,***
+f0_std,133.452,0.0,***
+f0_range,85.141,0.0,***
+rms_mean,76.033,0.0,***
+speaking_rate,107.162,0.0,***
+spectral_centroid,109.356,0.0,***
