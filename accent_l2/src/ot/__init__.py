@@ -3,6 +3,7 @@ from .frame_ot import (
     EntropicOTMap,
     GaussianOTMap,
     GaussianStats,
+    UnitConditionalOTMap,
     bures_wasserstein_sq,
     fit_gaussian,
     quantize,

@@ -16,6 +16,7 @@ from src.ot import (
     EntropicOTMap,
     GaussianOTMap,
     GaussianStats,
+    UnitConditionalOTMap,
     bures_wasserstein_sq,
     fit_gaussian,
     quantize,
@@ -87,6 +88,62 @@ def test_quantize_nearest_centroid():
     c = np.array([[0.0, 0.0], [10.0, 0.0], [0.0, 10.0]])
     x = np.array([[0.1, 0.2], [9.0, 1.0], [1.0, 8.0], [-1.0, -1.0]])
     assert quantize(x, c).tolist() == [0, 1, 2, 0]
+
+
+def _two_unit_data(n=600, d=3):
+    """Два «звука» (центры ±10); акцент сдвигает unit0 на +1, unit1 на -1 по оси 0."""
+    c = np.array([[10.0, 0, 0], [-10.0, 0, 0]])
+    def make(shift, seed):
+        parts, units = [], []
+        for u in (0, 1):
+            parts.append(_cloud(n, c[u] + np.array([shift[u], 0, 0]), [0.5, 0.5, 0.5], d=d, seed=seed + u))
+            units += [u] * n
+        return torch.cat(parts), np.array(units), c
+    return make((0, 0), 10), make((1.0, -1.0), 20)
+
+
+def test_unit_conditional_recovers_per_unit_shifts():
+    (X, ux, c), (Y, uy, _) = _two_unit_data()
+    for kw in ({"kind": "bw", "cov_mode": "mean"}, {"kind": "bw", "cov_mode": "diag", "shrink": 0.0},
+               {"kind": "ent", "eps": 0.05}):
+        m = UnitConditionalOTMap(min_frames=10, **kw).fit(X, Y, ux, uy)
+        assert m.coverage == 1.0
+        Z = m(X, ux)
+        for u, shift in ((0, 1.0), (1, -1.0)):
+            d = (Z[ux == u] - X[ux == u]).mean(0)[0].item()
+            assert abs(d - shift) < 0.25, (kw, u, d)
+        # ячейки не пересекаются → единицы не меняются
+        assert (quantize(Z.numpy(), c) == ux).all()
+
+
+def test_global_map_fails_where_conditional_succeeds():
+    (X, ux, _), (Y, uy, _) = _two_unit_data()
+    glob = GaussianOTMap(shrink=0.0, cov_mode="mean").fit(X, Y)  # средние совпадают → ≈ 0 сдвиг
+    cond = UnitConditionalOTMap("bw", "mean", min_frames=10).fit(X, Y, ux, uy)
+
+    def gap(Z):  # средний по юнитам зазор до цели
+        return sum(((Z[ux == u].mean(0) - Y[uy == u].mean(0)) ** 2).sum().item() for u in (0, 1))
+
+    assert gap(cond(X, ux)) < 0.1 * gap(glob(X))
+
+
+def test_unit_conditional_min_frames_fallback_identity():
+    (X, ux, _), (Y, uy, _) = _two_unit_data(n=20)
+    m = UnitConditionalOTMap("bw", "mean", min_frames=50).fit(X, Y, ux, uy)
+    assert m.coverage == 0.0 and len(m.maps) == 0
+    assert (m(X, ux) - X).abs().max() < 1e-12
+
+
+def test_gaussian_cov_modes():
+    X = _cloud(2000, [0, 0, 0], [1.0, 2.0, 0.5], seed=1)
+    Y = _cloud(2000, [4, -2, 1], [0.5, 1.0, 3.0], seed=2)
+    gy = fit_gaussian(Y, 0.0)
+    m_mean = GaussianOTMap(0.0, "mean").fit(X, Y)(X)
+    m_diag = GaussianOTMap(0.0, "diag").fit(X, Y)(X)
+    assert (m_mean.mean(0) - gy.mean).abs().max() < 1e-8
+    assert (m_diag.mean(0) - gy.mean).abs().max() < 1e-8
+    assert (m_diag.std(0) - Y.std(0)).abs().max() < 1e-6    # diag подгоняет дисперсии
+    assert (m_mean.std(0) - Y.std(0)).abs().max() > 0.3      # mean — нет
 
 
 if __name__ == "__main__":

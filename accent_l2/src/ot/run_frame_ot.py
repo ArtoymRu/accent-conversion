@@ -16,10 +16,15 @@ Protocol (speaker-independent):
   bw_to_tgt, sw_to_tgt  — W_2^2 (гауссианы) / sliced W до кадров held-out tgt
   p_tgt, p_src, top1_tgt — LogReg-классификатор акцента на средних по высказыванию
                            (обучен на train-дикторах, сырые признаки)
+  cond_gap              — зазор по средним внутри единицы до held-out tgt:
+                          sum_u w_u ||mean_u(mapped) - mean_u(tgt)||^2 (w_u — доли единиц src)
   unit_change           — доля кадров, у которых изменилась k-means единица
   rel_disp              — средняя ||T(x)-x|| / ||x||
 
 Результаты: outputs/ot/frame/<model>_L<layer>_<metric>_eps<eps>[_spknorm]/
+
+Методы: глобальные bw/ent и условные по k-means единице ubw-mean / ubw-diag / uent
+(см. UnitConditionalOTMap); без переноса — identity.
 
 Примеры:
   python src/ot/run_frame_ot.py --speaker_norm
@@ -46,6 +51,7 @@ from src.data.accent_map import SPEAKER_TO_ACCENT
 from src.ot import (
     EntropicOTMap,
     GaussianOTMap,
+    UnitConditionalOTMap,
     bures_wasserstein_sq,
     fit_gaussian,
     quantize,
@@ -92,6 +98,11 @@ def main():
     ap.add_argument("--frames_per_utt", type=int, default=60)
     ap.add_argument("--n_eval_utt", type=int, default=40)
     ap.add_argument("--lams", type=float, nargs="+", default=[1.0, 0.5])
+    ap.add_argument("--cond_methods", nargs="*", default=["ubw-mean", "ubw-diag", "uent"],
+                    help="условные методы (пусто — только глобальные)")
+    ap.add_argument("--min_frames", type=int, default=30, help="мин. кадров единицы в src и tgt")
+    ap.add_argument("--cond_shrink", type=float, default=0.3)
+    ap.add_argument("--cond_n_max", type=int, default=300, help="кадров на единицу для uent")
     ap.add_argument("--speaker_norm", action="store_true")
     ap.add_argument("--pairs", nargs="*", help="src:tgt ... (по умолчанию все)")
     ap.add_argument("--seed", type=int, default=0)
@@ -121,16 +132,22 @@ def main():
             spk_mean[spk] = np.concatenate([u for u in utts]).mean(0)
     heldout_mean = {acc: np.concatenate(u).mean(0) for acc, u in eval_utts.items()}
 
-    def cloud(acc):  # облако кадров для fit
-        parts = []
+    def cloud(acc):  # облако кадров для fit: (кадры в пространстве карты, единицы по сырым кадрам)
+        fit, units = [], []
         for spk, utts in train_utts[acc].items():
-            parts.append(sample_frames(utts, args.frames_per_utt, rng,
-                                       spk_mean[spk] if args.speaker_norm else None))
-        return np.concatenate(parts)
+            raw = sample_frames(utts, args.frames_per_utt, rng)
+            fit.append(raw - (spk_mean[spk] if args.speaker_norm else 0.0))
+            units.append(quantize(raw, centroids))
+        return np.concatenate(fit), np.concatenate(units)
 
-    clouds = {a: cloud(a) for a in ACCENTS}
-    ref_frames = {a: np.concatenate(eval_utts[a]) - (heldout_mean[a] if args.speaker_norm else 0.0)
-                  for a in ACCENTS}
+    cloud_all = {a: cloud(a) for a in ACCENTS}
+    clouds = {a: c[0] for a, c in cloud_all.items()}
+    cloud_units = {a: c[1] for a, c in cloud_all.items()}
+    ref_frames, ref_units = {}, {}
+    for a in ACCENTS:
+        raw = subsample(np.concatenate(eval_utts[a]), 3000, rng)
+        ref_units[a] = quantize(raw, centroids)
+        ref_frames[a] = raw - (heldout_mean[a] if args.speaker_norm else 0.0)
 
     # ── классификатор акцента (utterance mean, train-дикторы, сырые признаки) ─
     Xtr, ytr = [], []
@@ -160,26 +177,48 @@ def main():
         t1 = time.time()
         maps = {"bw": GaussianOTMap(args.shrink).fit(clouds[src], clouds[tgt]),
                 "ent": EntropicOTMap(args.metric, args.eps, args.n_max, seed=args.seed).fit(clouds[src], clouds[tgt])}
+        cond_kw = dict(min_frames=args.min_frames, shrink=args.cond_shrink, metric=args.metric,
+                       eps=args.eps, n_max=args.cond_n_max, seed=args.seed)
+        cond_cfg = {"ubw-mean": dict(kind="bw", cov_mode="mean"), "ubw-diag": dict(kind="bw", cov_mode="diag"),
+                    "ubw-full": dict(kind="bw", cov_mode="full"), "uent": dict(kind="ent")}
+        coverage = {}
+        for cm in args.cond_methods:
+            maps[cm] = UnitConditionalOTMap(**cond_cfg[cm], **cond_kw).fit(
+                clouds[src], clouds[tgt], cloud_units[src], cloud_units[tgt])
+            coverage[cm] = maps[cm].coverage
         mu = heldout_mean[src]
-        ref = subsample(ref_frames[tgt], 3000, rng)
+        ref, ref_u = ref_frames[tgt], ref_units[tgt]
         g_ref = fit_gaussian(ref, args.shrink)
         ti = ACCENTS.index(tgt)
         si = ACCENTS.index(src)
 
         variants = [("identity", None, 0.0)] + [(f"{m}_lam{l}", m, l) for m in maps for l in args.lams]
         for name, m, lam in variants:
-            mapped_utts, mapped_c, changed, disp = [], [], [], []
+            mapped_utts, mapped_c, orig_units, changed, disp = [], [], [], [], []
             for u in eval_utts[src]:
                 xc = u - (mu if args.speaker_norm else 0.0)
+                uu = quantize(u, centroids)
                 if m is None:
                     z = xc
+                elif isinstance(maps[m], UnitConditionalOTMap):
+                    z = maps[m](xc, uu, lam=lam).float().numpy()
                 else:
                     z = maps[m](xc, lam=lam).float().numpy()
                 mapped_c.append(z)
+                orig_units.append(uu)
                 mapped_utts.append(z + (mu if args.speaker_norm else 0.0))
-                changed.append((quantize(mapped_utts[-1], centroids) != quantize(u, centroids)).mean())
+                changed.append((quantize(mapped_utts[-1], centroids) != uu).mean())
                 disp.append((np.linalg.norm(z - xc, axis=1) / np.linalg.norm(xc, axis=1).clip(1e-8)).mean())
-            Z = subsample(np.concatenate(mapped_c), 3000, rng)
+            Zfull, Ufull = np.concatenate(mapped_c), np.concatenate(orig_units)
+            sel = rng.choice(len(Zfull), min(3000, len(Zfull)), replace=False)
+            Z = Zfull[sel]
+            # зазор по средним внутри единицы (единицы должны быть в обеих выборках)
+            gap = wsum = 0.0
+            for un in np.unique(Ufull):
+                zi, ri = Zfull[Ufull == un], ref[ref_u == un]
+                if len(zi) >= 10 and len(ri) >= 10:
+                    gap += len(zi) * float(((zi.mean(0) - ri.mean(0)) ** 2).sum())
+                    wsum += len(zi)
             P = clf_probs(mapped_utts)
             rows.append({
                 "src": src, "tgt": tgt, "method": name,
@@ -187,14 +226,17 @@ def main():
                 "sw_to_tgt": float(sliced_wasserstein(torch.as_tensor(Z), torch.as_tensor(ref))),
                 "p_tgt": P[:, ti].mean(), "p_src": P[:, si].mean(),
                 "top1_tgt": (P.argmax(1) == ti).mean(),
+                "cond_gap": gap / max(wsum, 1),
                 "unit_change": float(np.mean(changed)), "rel_disp": float(np.mean(disp)),
+                "coverage": coverage.get(m, 1.0) if m else 1.0,
             })
         print(f"  {src}→{tgt}: {time.time() - t1:.0f}s  "
               f"BW²(src,tgt)={maps['bw'].distance_sq:.1f}", flush=True)
 
     ev = pd.DataFrame(rows)
     ev.to_csv(out / "mapping_eval.csv", index=False)
-    cols = ["bw_to_tgt", "sw_to_tgt", "p_tgt", "p_src", "top1_tgt", "unit_change", "rel_disp"]
+    cols = ["bw_to_tgt", "sw_to_tgt", "cond_gap", "p_tgt", "top1_tgt", "unit_change", "rel_disp", "coverage"]
+    pd.set_option("display.width", 220); pd.set_option("display.max_columns", None)
     print("\nСреднее по парам:\n", ev.groupby("method")[cols].mean().round(4), flush=True)
     print(f"\nСохранено в {out}")
 

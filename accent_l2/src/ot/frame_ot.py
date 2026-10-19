@@ -74,19 +74,45 @@ def bures_wasserstein_sq(g1: GaussianStats, g2: GaussianStats) -> float:
 
 
 class GaussianOTMap:
-    """Карта Монжа между гауссиановыми приближениями облаков кадров."""
+    """
+    Карта Монжа между гауссиановыми приближениями облаков кадров.
 
-    def __init__(self, shrink: float = 1e-2):
-        self.shrink = shrink
+    cov_mode:
+      full — полная ковариация (Bures–Wasserstein), нужны N >> D кадров;
+      diag — покомпонентное масштабирование sqrt(var_t / var_s), N ≳ 20 достаточно;
+      mean — только сдвиг средних (A = I), самый устойчивый при малых N.
+    """
+
+    def __init__(self, shrink: float = 1e-2, cov_mode: str = "full"):
+        if cov_mode not in ("full", "diag", "mean"):
+            raise ValueError(f"cov_mode must be full|diag|mean, got {cov_mode!r}")
+        self.shrink, self.cov_mode = shrink, cov_mode
         self.src: Optional[GaussianStats] = None
         self.tgt: Optional[GaussianStats] = None
-        self.A: Optional[torch.Tensor] = None
+        self.A: Optional[torch.Tensor] = None       # (D, D) для full
+        self.scale: Optional[torch.Tensor] = None   # (D,) для diag/mean
+
+    @staticmethod
+    def _diag_stats(X, shrink: float) -> GaussianStats:
+        X = _t(X)
+        mean = X.mean(0)
+        var = X.var(0, unbiased=len(X) > 1) if len(X) > 1 else torch.ones_like(mean)
+        var = (1.0 - shrink) * var + shrink * var.mean()
+        return GaussianStats(mean, torch.diag(var))
 
     def fit(self, src_frames, tgt_frames) -> "GaussianOTMap":
-        self.src = fit_gaussian(src_frames, self.shrink)
-        self.tgt = fit_gaussian(tgt_frames, self.shrink)
-        rs, rs_inv = _sym_sqrt(self.src.cov), _sym_sqrt(self.src.cov, inverse=True)
-        self.A = rs_inv @ _sym_sqrt(rs @ self.tgt.cov @ rs) @ rs_inv
+        if self.cov_mode == "full":
+            self.src = fit_gaussian(src_frames, self.shrink)
+            self.tgt = fit_gaussian(tgt_frames, self.shrink)
+            rs, rs_inv = _sym_sqrt(self.src.cov), _sym_sqrt(self.src.cov, inverse=True)
+            self.A = rs_inv @ _sym_sqrt(rs @ self.tgt.cov @ rs) @ rs_inv
+        else:
+            self.src = self._diag_stats(src_frames, self.shrink)
+            self.tgt = self._diag_stats(tgt_frames, self.shrink)
+            if self.cov_mode == "diag":
+                self.scale = (self.tgt.cov.diagonal() / self.src.cov.diagonal().clamp_min(1e-12)).sqrt()
+            else:
+                self.scale = torch.ones_like(self.src.mean)
         return self
 
     @property
@@ -95,7 +121,10 @@ class GaussianOTMap:
 
     def __call__(self, X, lam: float = 1.0) -> torch.Tensor:
         X = _t(X)
-        T = self.tgt.mean + (X - self.src.mean) @ self.A.T
+        if self.cov_mode == "full":
+            T = self.tgt.mean + (X - self.src.mean) @ self.A.T
+        else:
+            T = self.tgt.mean + (X - self.src.mean) * self.scale
         return X + lam * (T - X)
 
 
@@ -151,3 +180,57 @@ def quantize(X, centroids, batch: int = 8192) -> np.ndarray:
     X = _t(X)
     out = [pairwise_cost(X[s:s + batch], c, "sqeuclidean").argmin(1) for s in range(0, len(X), batch)]
     return torch.cat(out).numpy()
+
+
+# ── Условный по единице OT ────────────────────────────────────────────────────
+
+class UnitConditionalOTMap:
+    """
+    OT отдельно для каждой k-means единицы u: T_u переносит кадры src-акцента
+    с единицей u в распределение кадров tgt-акцента с той же единицей u.
+
+    Убирает confound содержания (единица ≈ псевдо-фонема); перенос остаётся
+    внутри ячейки Вороного, поэтому единицы почти не меняются.
+
+    Единицы, где кадров меньше min_frames в src или tgt, не отображаются
+    (тождественно) — доля покрытых кадров в `coverage`.
+
+    kind: "bw" (GaussianOTMap, cov_mode full|diag|mean) или "ent" (EntropicOTMap).
+    """
+
+    def __init__(self, kind: str = "bw", cov_mode: str = "diag", shrink: float = 0.3,
+                 min_frames: int = 30, metric: str = "sqeuclidean", eps: float = 0.05,
+                 n_max: int = 300, seed: int = 0):
+        if kind not in ("bw", "ent"):
+            raise ValueError(f"kind must be bw|ent, got {kind!r}")
+        self.kind, self.cov_mode, self.shrink = kind, cov_mode, shrink
+        self.min_frames, self.metric, self.eps, self.n_max, self.seed = min_frames, metric, eps, n_max, seed
+        self.maps: dict = {}
+        self.coverage: float = 0.0
+
+    def _new_map(self):
+        if self.kind == "bw":
+            return GaussianOTMap(self.shrink, self.cov_mode)
+        return EntropicOTMap(self.metric, self.eps, self.n_max, seed=self.seed)
+
+    def fit(self, src_frames, tgt_frames, src_units, tgt_units) -> "UnitConditionalOTMap":
+        src_frames, tgt_frames = _t(src_frames), _t(tgt_frames)
+        src_units, tgt_units = np.asarray(src_units), np.asarray(tgt_units)
+        self.maps = {}
+        for u in np.intersect1d(np.unique(src_units), np.unique(tgt_units)):
+            si, ti = np.where(src_units == u)[0], np.where(tgt_units == u)[0]
+            if len(si) >= self.min_frames and len(ti) >= self.min_frames:
+                self.maps[int(u)] = self._new_map().fit(src_frames[si], tgt_frames[ti])
+        self.coverage = float(np.isin(src_units, list(self.maps)).mean()) if len(src_units) else 0.0
+        return self
+
+    def __call__(self, X, units, lam: float = 1.0) -> torch.Tensor:
+        X = _t(X)
+        units = np.asarray(units)
+        out = X.clone()
+        for u in np.unique(units):
+            m = self.maps.get(int(u))
+            if m is not None:
+                idx = torch.as_tensor(np.where(units == u)[0])
+                out[idx] = m(X[idx], lam=lam)
+        return out
