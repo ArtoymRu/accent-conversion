@@ -1,4 +1,12 @@
 from .cost import accent_subspace, normalize_cost, pairwise_cost, whitening_matrix
+from .frame_ot import (
+    EntropicOTMap,
+    GaussianOTMap,
+    GaussianStats,
+    bures_wasserstein_sq,
+    fit_gaussian,
+    quantize,
+)
 from .sinkhorn import (
     SinkhornResult,
     sinkhorn,
