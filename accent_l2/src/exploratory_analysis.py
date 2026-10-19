@@ -79,21 +79,34 @@ def get_speaker_from_path(wav_path: str) -> str:
 
 
 def _find_wav_samples(root: Path) -> list:
-    """Сканирует root на папки спикеров и возвращает список (wav_path, accent)."""
+    """Сканирует root на папки спикеров. Поддерживает плоскую и вложенную структуры:
+    - плоская: root/SPEAKER/wav/*.wav
+    - вложенная: root/accent/SPEAKER/wav/*.wav
+    """
     out = []
+
+    def _try_speaker_dir(path: Path):
+        speaker = path.name.upper()
+        if speaker not in SPEAKER_TO_ACCENT:
+            return False
+        wav_dir = path / "wav"
+        if not wav_dir.is_dir():
+            return False
+        accent = SPEAKER_TO_ACCENT[speaker]
+        for f in wav_dir.glob("*.wav"):
+            out.append((str(f.resolve()), accent))
+        return True
+
     for name in os.listdir(root):
         path = root / name
         if not path.is_dir():
             continue
-        speaker = name.upper()
-        if speaker not in SPEAKER_TO_ACCENT:
-            continue
-        accent = SPEAKER_TO_ACCENT[speaker]
-        wav_dir = path / "wav"
-        if not wav_dir.is_dir():
-            continue
-        for f in wav_dir.glob("*.wav"):
-            out.append((str(f.resolve()), accent))
+        if not _try_speaker_dir(path):
+            # Try one level deeper (accent subdirectory)
+            for sub_name in os.listdir(path):
+                sub_path = path / sub_name
+                if sub_path.is_dir():
+                    _try_speaker_dir(sub_path)
     return out
 
 
@@ -247,9 +260,9 @@ def run_visual_analysis(df, out_dir: Path):
         fig, ax = plt.subplots(figsize=(10, 5))
         order = [a for a in ACCENTS if a in df["accent"].values]
         sns.boxplot(data=df, x="accent", y="duration_sec", hue="accent", order=order, ax=ax, palette="Set2", legend=False)
-        ax.set_title("Распределение длительности записей по акцентам (сек)")
+        ax.set_title("Распределение длительности записей по акцентам")
         ax.set_xlabel("Акцент")
-        ax.set_ylabel("Длительность (сек)")
+        ax.set_ylabel("Длительность, с")
         plt.xticks(rotation=45, ha="right")
         plt.tight_layout()
         plt.savefig(out_dir / "plot2_duration_by_accent.png", dpi=150)
@@ -260,9 +273,9 @@ def run_visual_analysis(df, out_dir: Path):
     fig, ax = plt.subplots(figsize=(10, 8))
     speaker_counts = df["speaker"].value_counts()
     speaker_counts.plot(kind="barh", ax=ax, color="coral", edgecolor="black")
-    ax.set_title("Количество записей по спикерам")
+    ax.set_title("Количество записей по дикторам")
     ax.set_xlabel("Количество записей")
-    ax.set_ylabel("Спикер")
+    ax.set_ylabel("Диктор")
     plt.tight_layout()
     plt.savefig(out_dir / "plot3_counts_by_speaker.png", dpi=150)
     plt.close()
