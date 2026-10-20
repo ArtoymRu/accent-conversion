@@ -23,8 +23,11 @@ held-out дикторы не участвовали ни в одном шаге 
   p_tgt_nap            — то же для NAP-классификатора (SpeakerRobustAccentClassifier)
   unit_change          — доля кадров, у которых изменилась k-means единица
   rel_disp             — средняя ||T(x)-x|| / ||x||
+  spk_top1/cos_src/capture/margin — прокси сохранности диктора (src.ot.speaker_probe):
+                         ближайший из 24 дикторов = src; сходство с src; ближайший
+                         — train-диктор цели (подмена голоса); отрыв от ближайшего чужого
 
-Результаты: outputs/ot/frame/<model>_L<layer>_<metric>_eps<eps>[_spknorm]/
+Результаты: outputs/ot/frame/<model>_L<layer>_<metric>_eps<eps>[_spknorm][_<out_tag>]/
   mapping_eval.csv (все фолды), summary.csv
 
 Примеры:
@@ -58,6 +61,7 @@ from src.ot import (
 )
 from src.ot.data import fold_heldout, load_all_speakers, sample_frames, subsample, utterance_means
 from src.ot.robust_classifier import SpeakerRobustAccentClassifier
+from src.ot.speaker_probe import SpeakerEmbedder
 from src.utils.splits import ACCENTS
 
 COND_CFG = {"ubw-mean": dict(kind="bw", cov_mode="mean"), "ubw-diag": dict(kind="bw", cov_mode="diag"),
@@ -128,6 +132,14 @@ def run_fold(args, fold: int, utts: dict, rng: np.random.Generator) -> list:
     acc_nap = (clf_nap.predict(Xte) == yte).mean()
     print(f"  фолд {fold}: held-out {sorted(held)}; acc raw={acc_raw:.3f} nap={acc_nap:.3f}", flush=True)
 
+    # ── прокси сохранности диктора: LDA-эмбеддер на train-дикторах; held-out зачисляются
+    #    первой половиной высказываний, вторая половина — тестовая для retention ──
+    held_spk = {SPEAKER_TO_ACCENT[s]: s for s in held}
+    embedder = SpeakerEmbedder().fit({s: us for a in ACCENTS for s, us in train_utts[a].items()})
+    n_enr = {a: len(us) // 2 for a, us in eval_utts.items()}
+    for a, us in eval_utts.items():
+        embedder.enroll(held_spk[a], us[: n_enr[a]])
+
     def probs(clf, mapped_utts):
         return clf.predict_proba(np.stack([u.mean(0) for u in mapped_utts]))
 
@@ -178,7 +190,9 @@ def run_fold(args, fold: int, utts: dict, rng: np.random.Generator) -> list:
                     gap += len(zi) * float(((zi.mean(0) - ri.mean(0)) ** 2).sum())
                     wsum += len(zi)
             Pr, Pn = probs(clf_raw, mapped_utts), probs(clf_nap, mapped_utts)
+            ret = embedder.retention(mapped_utts[n_enr[src]:], held_spk[src], train_utts[tgt])
             rows.append({
+                **{f"spk_{k}": v for k, v in ret.items()},
                 "fold": fold, "src": src, "tgt": tgt, "method": name,
                 "bw_to_tgt": bures_wasserstein_sq(fit_gaussian(Z, args.shrink), g_ref),
                 "sw_to_tgt": float(sliced_wasserstein(torch.as_tensor(Z), torch.as_tensor(ref))),
@@ -218,6 +232,7 @@ def main():
     ap.add_argument("--speaker_norm", action="store_true")
     ap.add_argument("--pairs", nargs="*", help="src:tgt ... (по умолчанию все)")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--out_tag", default="", help="суффикс папки результатов (чтобы не перезаписывать другие прогоны)")
     args = ap.parse_args()
 
     feat_dir = _ROOT / "outputs" / "features" / args.model / f"layer{args.layer}"
@@ -229,7 +244,7 @@ def main():
     utts = load_all_speakers(feat_dir, SPEAKER_TO_ACCENT, max(args.n_fit_utt, args.n_eval_utt), rng)
     print(f"Загружено за {time.time() - t0:.0f}s; фолды: {args.folds}", flush=True)
 
-    tag = f"{args.model}_L{args.layer}_{args.metric}_eps{args.eps}" + ("_spknorm" if args.speaker_norm else "")
+    tag = f"{args.model}_L{args.layer}_{args.metric}_eps{args.eps}" + ("_spknorm" if args.speaker_norm else "")         + (f"_{args.out_tag}" if args.out_tag else "")
     out = _ROOT / "outputs" / "ot" / "frame" / tag
     out.mkdir(parents=True, exist_ok=True)
 
@@ -239,7 +254,8 @@ def main():
         pd.DataFrame(rows).to_csv(out / "mapping_eval.csv", index=False)  # чекпоинт после каждого фолда
 
     ev = pd.DataFrame(rows)
-    cols = ["bw_to_tgt", "sw_to_tgt", "cond_gap", "p_tgt", "p_tgt_nap", "unit_change", "rel_disp", "coverage"]
+    cols = ["bw_to_tgt", "sw_to_tgt", "cond_gap", "p_tgt", "p_tgt_nap", "unit_change", "rel_disp", "coverage",
+            "spk_top1", "spk_cos_src", "spk_capture", "spk_margin"]
     per_fold = ev.groupby(["method", "fold"])[cols].mean()
     summary = per_fold.groupby("method").agg(["mean", "std"])
     summary.to_csv(out / "summary.csv")
@@ -254,7 +270,8 @@ def main():
         d = per_fold.xs(m, level="method") - base
         print(f"  {m:18s} bw_to_tgt {d['bw_to_tgt'].mean():+.3f} [{(d['bw_to_tgt'] < 0).sum()}/{len(d)}]   "
               f"cond_gap {d['cond_gap'].mean():+.3f} [{(d['cond_gap'] < 0).sum()}/{len(d)}]   "
-              f"p_tgt {d['p_tgt'].mean():+.3f}  p_tgt_nap {d['p_tgt_nap'].mean():+.3f}", flush=True)
+              f"p_tgt {d['p_tgt'].mean():+.3f}  p_tgt_nap {d['p_tgt_nap'].mean():+.3f}  "
+              f"spk_top1 {d['spk_top1'].mean():+.3f}  spk_capture {d['spk_capture'].mean():+.3f}", flush=True)
     print(f"\nСохранено в {out}")
 
 
