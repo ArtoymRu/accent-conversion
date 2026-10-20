@@ -56,3 +56,16 @@ def subsample(X: np.ndarray, n: int, rng: np.random.Generator) -> np.ndarray:
 
 def utterance_means(utts: List[np.ndarray]) -> np.ndarray:
     return np.stack([u.mean(0) for u in utts])
+
+
+def load_utts_ids(feat_dir: Path, speaker: str, n: int, rng: np.random.Generator):
+    """Как load_utts, но дополнительно возвращает id высказываний: (ids, utts)."""
+    files = sorted(Path(feat_dir).glob(f"{speaker}_*.pt"))
+    if len(files) > n:
+        files = [files[i] for i in rng.choice(len(files), n, replace=False)]
+    ids, out = [], []
+    for f in files:
+        x = torch.load(f, map_location="cpu", weights_only=True)["features"]
+        ids.append(f.stem.split("_", 1)[1])
+        out.append(x.squeeze(0).numpy().astype(np.float32))
+    return ids, out

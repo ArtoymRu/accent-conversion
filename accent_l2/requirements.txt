@@ -22,4 +22,10 @@ librosa>=0.10.0
 jiwer>=3.0.0
 optuna>=3.0.0
 
+# Ресинтез и аудио-метрики (src/resynth): speechbrain ставить БЕЗ зависимостей, иначе pip заменит
+# CUDA-сборку torch на CPU-версию:
+#   pip install hyperpyyaml sentencepiece
+#   pip install speechbrain==1.0.3 --no-deps
+# Модели: speechbrain/tts-hifigan-ljspeech, speechbrain/spkrec-ecapa-voxceleb, openai/whisper-small (HF)
+
 # Optional: AudioSAE dependencies — install separately when using third_party/audiosae
