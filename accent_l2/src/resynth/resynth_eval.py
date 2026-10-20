@@ -181,18 +181,13 @@ def main():
                 spec = METHODS[name]
                 if spec is None:
                     z = u
-                elif name == "original":
-                    z = None
                 else:
                     kind, norm, lam = spec
                     mp = maps[(kind, norm)]
                     mu = mu_held[src] if norm else 0.0
                     z = mp(u - mu, units, lam=lam).float().numpy() + mu
-                if name == "original":
-                    wavs[name].append(wav16_of(sspk, uid))
-                else:
-                    mel = dec.synthesize_mel(torch.as_tensor(z, dtype=torch.float32, device=dev), mel_len)
-                    wavs[name].append(voc(mel))
+                mel = dec.synthesize_mel(torch.as_tensor(z, dtype=torch.float32, device=dev), mel_len)
+                wavs[name].append(voc(mel))
         wavs["original"] = [wav16_of(sspk, uid) for uid in test_ids]
         order = list(wavs)
 
@@ -209,7 +204,7 @@ def main():
             for j, uid in enumerate(test_ids):
                 err, nw = word_errors(refs[j], hyps[j])
                 rows.append({
-                    "pair": pair, "src": src, "tgt": tgt, "method": name, "utt": uid, "ref": refs[j], "hyp": hyps[j],
+                    "fold": args.fold, "pair": pair, "src": src, "tgt": tgt, "method": name, "utt": uid, "ref": refs[j], "hyp": hyps[j],
                     "word_err": err, "n_words": nw,
                     "spk_top1": float(nearest[j] == s_idx), "spk_capture": float(np.isin(nearest[j], tgt_idx)),
                     "spk_cos_src": float(sim[j, s_idx]), "spk_margin": float(sim[j, s_idx] - other[j]),
