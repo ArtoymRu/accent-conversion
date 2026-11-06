@@ -1,0 +1,18 @@
+Modality,Feature,Model,Type,Test Accuracy,Test F1
+Audio,HuBERT (layer 6),MLP,baseline,0.3943,0.3725
+Audio,HuBERT (layer 6),CNN,enhanced,0.4011,0.3724
+Audio,HuBERT (layer 6),LSTM,enhanced,0.4308,0.3997
+Audio,HuBERT (layer 6),TRANSFORMER,enhanced,0.3467,0.3003
+Audio,MFCC+Δ+ΔΔ (39-dim),MLP,baseline,0.0448,0.0569
+Audio,MFCC+Δ+ΔΔ (39-dim),MLP_DEEP,enhanced,0.0417,0.0504
+Audio,MFCC+Δ+ΔΔ (39-dim),LSTM,enhanced,0.0707,0.0809
+Audio,MFCC+Δ+ΔΔ (39-dim),CNN,enhanced,0.0585,0.0682
+Text,"Text: char TF-IDF (2,4)",CHAR_MLP_BASELINE,baseline,0.1666,0.1482
+Text,"Text: char TF-IDF (2,4)",CHAR_MLP_DEEP,enhanced,0.1663,0.1522
+Text,"Text: word TF-IDF (1,2)",WORD_MLP_BASELINE,baseline,0.1663,0.1468
+Text,"Text: word TF-IDF (1,2)",WORD_MLP_DEEP,enhanced,0.1667,0.1566
+Multimodal,Audio+Text Fusion,AudioOnly_LogReg,fusion,0.3822,0.3648
+Multimodal,Audio+Text Fusion,TextOnly_LogReg,fusion,0.1662,0.1648
+Multimodal,Audio+Text Fusion,early_fusion,fusion,0.4475,0.433
+Multimodal,Audio+Text Fusion,late_fusion,fusion,0.4435,0.413
+Multimodal,Audio+Text Fusion,cross_attention,fusion,0.4375,0.4098

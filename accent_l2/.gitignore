@@ -1,6 +1,5 @@
 # Data (large/generated)
 data/l2_arctic/
-outputs/*
 !outputs/README.md
 checkpoints/
 *.pt

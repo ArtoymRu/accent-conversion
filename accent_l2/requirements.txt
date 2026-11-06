@@ -9,7 +9,7 @@ pyyaml>=6.0
 tqdm>=4.65.0
 
 # Audio & models
-transformers>=4.30.0
+transformers>=4.31.0
 datasets>=2.14.0
 soundfile>=0.12.0
 
@@ -18,5 +18,14 @@ pandas>=2.0.0
 scikit-learn>=1.2.0
 matplotlib>=3.7.0
 seaborn>=0.12.0
+librosa>=0.10.0
+jiwer>=3.0.0
+optuna>=3.0.0
+
+# Ресинтез и аудио-метрики (src/resynth): speechbrain ставить БЕЗ зависимостей, иначе pip заменит
+# CUDA-сборку torch на CPU-версию:
+#   pip install hyperpyyaml sentencepiece
+#   pip install speechbrain==1.0.3 --no-deps
+# Модели: speechbrain/tts-hifigan-ljspeech, speechbrain/spkrec-ecapa-voxceleb, openai/whisper-small (HF)
 
 # Optional: AudioSAE dependencies — install separately when using third_party/audiosae

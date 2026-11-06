@@ -1,0 +1,66 @@
+======================================================================
+CLUSTERING & SEPARABILITY REPORT — HuBERT features on L2-ARCTIC
+======================================================================
+
+Dataset: 26,867 utterances | 6 accents | 24 speakers (4 per accent)
+Features: mean-pooled HuBERT hidden states (dim=768)
+Split protocol: full dataset (no train/test split for this analysis)
+
+KEY QUESTION: Do HuBERT features cluster by accent or by speaker?
+High ARI/NMI vs. speaker + low ARI/NMI vs. accent => features encode
+speaker identity more than accent => explains ~99% classification scores.
+
+
+Layer 6
+  Silhouette (accent label): 0.0237
+  Silhouette (speaker label): 0.0643
+  >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+  Silhouette interpretation: 1=perfect, 0=overlapping, <0=wrong cluster
+  Higher sil(speaker) vs sil(accent) => features encode speaker > accent
+
+  KMeans k= 6  |  vs accent: ARI=0.263 NMI=0.397  |  vs speaker: ARI=0.205 NMI=0.502
+  KMeans k=24  |  vs accent: ARI=0.309 NMI=0.648  |  vs speaker: ARI=0.864 NMI=0.917
+
+  Samples per accent:
+    arabic      : 4365
+    mandarin    : 4524
+    hindi       : 4524
+    korean      : 4524
+    spanish     : 4402
+    vietnamese  : 4528
+
+Layer 9
+  Silhouette (accent label): 0.0090
+  Silhouette (speaker label): 0.0197
+  >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+  Silhouette interpretation: 1=perfect, 0=overlapping, <0=wrong cluster
+  Higher sil(speaker) vs sil(accent) => features encode speaker > accent
+
+  KMeans k= 6  |  vs accent: ARI=0.196 NMI=0.259  |  vs speaker: ARI=0.149 NMI=0.350
+  KMeans k=24  |  vs accent: ARI=0.237 NMI=0.478  |  vs speaker: ARI=0.575 NMI=0.696
+
+  Samples per accent:
+    arabic      : 4365
+    mandarin    : 4524
+    hindi       : 4524
+    korean      : 4524
+    spanish     : 4402
+    vietnamese  : 4528
+
+Layer 12
+  Silhouette (accent label): 0.0180
+  Silhouette (speaker label): 0.0469
+  >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+  Silhouette interpretation: 1=perfect, 0=overlapping, <0=wrong cluster
+  Higher sil(speaker) vs sil(accent) => features encode speaker > accent
+
+  KMeans k= 6  |  vs accent: ARI=0.181 NMI=0.276  |  vs speaker: ARI=0.166 NMI=0.416
+  KMeans k=24  |  vs accent: ARI=0.278 NMI=0.587  |  vs speaker: ARI=0.771 NMI=0.853
+
+  Samples per accent:
+    arabic      : 4365
+    mandarin    : 4524
+    hindi       : 4524
+    korean      : 4524
+    spanish     : 4402
+    vietnamese  : 4528

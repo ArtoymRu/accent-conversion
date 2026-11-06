@@ -1,0 +1,2 @@
+model,layer,n_trials,best_val_f1,test_f1,hidden_size,num_layers,dropout,bidirectional,lr,batch_size
+lstm,layer6,20,0.9995,0.354,128,1,0.1,False,0.003,32

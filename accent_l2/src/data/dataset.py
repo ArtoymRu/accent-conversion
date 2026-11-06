@@ -19,24 +19,38 @@ from .accent_map import get_accent, get_accent_id, ACCENTS
 
 
 def _find_wav_files(root: Union[str, Path]) -> list:
-    """Scan root for speaker dirs and collect (wav_path, accent)."""
+    """Scan root for speaker dirs and collect (wav_path, accent).
+    Supports both flat (root/SPEAKER/wav/) and nested (root/accent/SPEAKER/wav/) layouts.
+    """
     root = Path(root)
     out = []
     from .accent_map import SPEAKER_TO_ACCENT
 
-    for name in os.listdir(root):
-        path = root / name
-        if not path.is_dir():
-            continue
-        speaker = name.upper()
-        if speaker not in SPEAKER_TO_ACCENT:
-            continue
-        accent = SPEAKER_TO_ACCENT[speaker]
-        wav_dir = path / "wav"
-        if not wav_dir.is_dir():
-            continue
-        for f in wav_dir.glob("*.wav"):
-            out.append((f.resolve(), accent))
+    def _scan_dir(directory: Path):
+        for name in os.listdir(directory):
+            path = directory / name
+            if not path.is_dir():
+                continue
+            speaker = name.upper()
+            if speaker in SPEAKER_TO_ACCENT:
+                accent = SPEAKER_TO_ACCENT[speaker]
+                wav_dir = path / "wav"
+                if wav_dir.is_dir():
+                    for f in wav_dir.glob("*.wav"):
+                        out.append((f.resolve(), accent))
+            else:
+                # One level deeper (accent subdirectory)
+                for sub in path.iterdir():
+                    if not sub.is_dir():
+                        continue
+                    spk = sub.name.upper()
+                    if spk in SPEAKER_TO_ACCENT:
+                        wav_dir = sub / "wav"
+                        if wav_dir.is_dir():
+                            for f in wav_dir.glob("*.wav"):
+                                out.append((f.resolve(), SPEAKER_TO_ACCENT[spk]))
+
+    _scan_dir(root)
     return out
 
 
