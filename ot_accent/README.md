@@ -10,7 +10,8 @@ Transport for Accent Transfer in Frozen Speech Representations"*
 > figure on this page is synthetic and shows the *shape* of a result, not a
 > result. The first real run is step 1 of [Next steps](#7-next-steps).
 
-**Contents:** [1 The idea](#1-the-idea) ·
+**Contents:** [0 In plain words](#0-in-plain-words) ·
+[1 The idea](#1-the-idea) ·
 [2 Three claims](#2-three-claims-three-experiments) ·
 [3 What changes from `accent_l2`](#3-what-changes-from-accent_l2) ·
 [4 The family of maps](#4-the-family-of-maps) ·
@@ -19,6 +20,69 @@ Transport for Accent Transfer in Frozen Speech Representations"*
 [7 Next steps](#7-next-steps) ·
 [8 Decisions for the call](#8-decisions-for-the-call) ·
 [9 What is checked](#9-what-is-checked-and-what-is-not)
+
+---
+
+## 0. In plain words
+
+Read this first. The rest of the page is the same thing with formulas.
+
+**Where it started.** AccentFlow moved accent with one vector: the difference
+between the centroids of two groups of speakers. The accent moved, and the
+voice moved with it. This paper asks why, and how to avoid it.
+
+**The main thought.** An accent is not "everything sounds a bit different".
+It is "particular sounds are pronounced differently". A Hindi speaker has a
+different /t/ and a different /w/, while many vowels are almost like anyone
+else's. Add the same vector to every frame and you shift the speaker's
+average, which is their voice, not the individual sounds.
+
+**The model in words.** Every frame (a WavLM vector) is a sum of four things:
+
+1. which sound it is (the phone);
+2. whose voice it is (a shift common to all sounds of that speaker);
+3. how this accent bends this particular sound;
+4. how this person bends this particular sound.
+
+The accent we want to move is the third.
+
+**Why one vector is bad.** We have 4 speakers per accent. The difference of
+the averages of two groups is "the difference between accents" plus "which
+people we happened to record". With four people the second part is large and
+the two cannot be told apart.
+
+**What we do instead.**
+
+1. Subtract from every speaker their own average. The voice is gone.
+2. For each of the 39 phones, see where it sits relative to the speaker's centre.
+3. Average over the speakers of an accent and take the difference between two
+   accents. The result is a table of 39 vectors, one per phone.
+4. To edit, add to every frame the vector of its phone.
+
+The speaker's average does not change, so the voice stays where it was.
+
+**Where optimal transport comes in.** All methods are versions of one task,
+"move the frames of accent A onto the frames of accent B":
+
+- a shift (move the means only): our method;
+- a shift and a scale (the variances too);
+- replacing a frame by the nearest frames of target speakers (kNN, Sinkhorn).
+
+The third takes frames from other people and brings their voice along. That
+is what the pilot saw: the entropic map gave the strongest accent shift and
+replaced the voice.
+
+**The experiments are four questions.**
+
+| | Question |
+|---|---|
+| **E0** | Does speech still sound normal after WavLM → vocoder when nothing is changed? |
+| **E1** | What share of the spread of frames belongs to each of the four terms? Control: shuffle the accent labels between speakers; the accent shares must drop to zero. |
+| **E4** | How many speakers does an accent direction need? Prediction: the error falls as 1/S, and it is much smaller for the per-phone table than for the single vector. |
+| **E2** | Every map, on speakers that were not used to fit it: how much accent was added, how much voice was lost. |
+
+**What is needed now.** Only the first step: run the feature extraction and
+E0 on Colab and listen. Everything else depends on it.
 
 ---
 
