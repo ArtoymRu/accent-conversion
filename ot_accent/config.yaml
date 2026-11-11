@@ -1,0 +1,19 @@
+# Paths. The corpora are only read by experiments/extract.py.
+l2_arctic: data/l2arctic        # contains ABA/, ASI/, ... each with wav/, transcript/, textgrid/
+cmu_arctic: data/cmu_arctic     # contains cmu_us_bdl_arctic/, ... each with wav/, lab/, etc/
+cache: cache                    # one .npz per speaker: statistics and frames
+results: results                # csv, figures, audio
+
+device: cuda
+layers: [3, 6, 9, 12, 18, 24]   # statistics are kept for each of these (E1)
+edit_layer: 6                   # edits and vocoding happen here (the kNN-VC vocoder inverts layer 6)
+max_utts: null                  # utterances per speaker used for statistics; null = all
+test_utts: 20                   # per speaker: held out of all statistics, edited and scored (E0, E2)
+pool_utts: 100                  # per speaker: frames kept as neighbours for barycentric maps
+
+source_accent: native           # E2 moves held-out speakers of this accent towards every other accent
+strengths: [0.5, 1.0, 1.5, 2.0]
+knn: 4
+prematched_vocoder: true        # vocoder trained on kNN-matched frames: more tolerant of edited frames
+audio_metrics: true             # WER (Whisper) and speaker cosine (ECAPA) in E2; false = frame metrics only
+seed: 0

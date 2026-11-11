@@ -1,0 +1,7 @@
+__pycache__/
+.pytest_cache/
+cache/
+cache_synthetic/
+results/
+results_synthetic/
+data/

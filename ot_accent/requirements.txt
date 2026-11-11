@@ -1,0 +1,14 @@
+# core: statistics, maps, tests, E1, E4
+numpy
+scipy
+pyyaml
+matplotlib
+pytest
+# audio: extract, E0, E2
+torch
+torchaudio
+soundfile
+textgrid
+openai-whisper
+jiwer
+speechbrain
