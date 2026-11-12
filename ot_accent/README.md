@@ -117,6 +117,9 @@ T_{\lambda,\kappa}(x, c) \;=\; x \;+\; \lambda\,\Delta_c \;+\; \kappa\,\delta
 | $\lambda$ | segmental strength | leaves the speaker's centre exactly where it was |
 | $\kappa$ | global strength | moves the voice centre; cannot be told apart from "the average voice of the people we recorded" |
 
+<p align="center"><img src="docs/fig_idea.png" width="760"><br>
+<em>A toy in two dimensions. Left: the two groups differ mostly by who is in them. Right: with each speaker's centre removed, the accent is a different displacement for each phone.</em></p>
+
 The whole pipeline, with nothing trained:
 
 ```mermaid
@@ -207,7 +210,8 @@ otaccent/
   variance.py    variance components, placebo, the 1/S law
   metrics.py     accent from the phone profile; WER; speaker cosine
   synthetic.py   a world that obeys the model, with known components
-experiments/     extract.py, e0_channel.py, e1_variance.py, e2_maps.py, e4_speaker_count.py
+experiments/     extract.py, e0_channel.py, e1_variance.py, e2_maps.py, e4_speaker_count.py,
+                 overview_figures.py (the figures on this page, from the result files)
 tests/           the propositions, checked on the synthetic world
 config.yaml      paths and the few numbers that matter
 ```
@@ -265,8 +269,8 @@ profile (conditional view) and from the speaker centre (global view).
 python -m experiments.e1_variance
 ```
 
-<p align="center"><img src="docs/synthetic_e1_variance.png" width="640"><br>
-<em>Synthetic world, one layer. Left: share of variance per term. Right: the two accent terms against their placebo band.</em></p>
+<p align="center"><img src="docs/fig_variance.png" width="860"><br>
+<em>Left: share of variance per term. Middle: accent × content against the same quantity with accent labels shuffled. Right: accent of an unseen speaker identified from the global and from the conditional view.</em></p>
 
 ### E4 — how many speakers does a direction need?
 
@@ -291,8 +295,8 @@ below its signal (dotted lines).
 python -m experiments.e4_speaker_count
 ```
 
-<p align="center"><img src="docs/synthetic_e4_speaker_count.png" width="380"><br>
-<em>Synthetic world. Points: measured. Lines: predicted from E1. Dotted: signal.</em></p>
+<p align="center"><img src="docs/fig_speaker_count.png" width="460"><br>
+<em>Points: measured. Lines: predicted from E1. Dotted: size of the true delta. A direction is usable to the right of where its line crosses its dotted level.</em></p>
 
 > [!NOTE]
 > L2-ARCTIC has 4 speakers per accent, so only $S = 1, 2$ can be measured. The
@@ -323,8 +327,11 @@ barycentres on identity at equal accent. The placebo moves accent by nothing.
 python -m experiments.e2_maps        # resumable; rows are appended to results/e2_maps.csv
 ```
 
-<p align="center"><img src="docs/synthetic_e2_frontier.png" width="460"><br>
-<em>Synthetic world, frames only. Each line is one map as strength grows. Up and right is better.</em></p>
+<p align="center"><img src="docs/fig_strength.png" width="860"><br>
+<em>What strength does, for four maps (frames only, no vocoder).</em></p>
+
+<p align="center"><img src="docs/fig_scorecard.png" width="860"><br>
+<em>All maps at strength 1 (frames only, no vocoder).</em></p>
 
 ### Running
 
