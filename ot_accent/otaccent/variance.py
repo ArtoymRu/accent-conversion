@@ -70,6 +70,17 @@ def permutation_null(tab, p=None, n_perm=200, seed=0) -> list[dict]:
     return [components(tab, p, rng.permutation(tab.accents)) for _ in range(n_perm)]
 
 
+def leave_one_speaker_out(tab, p=None) -> list[dict]:
+    """Components recomputed with each speaker removed in turn.
+
+    With four speakers per accent no confidence interval deserves the name. The
+    spread of these values shows how much an estimate hangs on a single speaker.
+    """
+    p = tab.content() if p is None else p
+    every = np.arange(len(tab.speakers))
+    return [components(tab.subset(every != s), p) for s in every]
+
+
 def delta_error(tab, src_accent, tgt_accent, S, p=None, n_draws=200, seed=0) -> dict:
     """Error and signal of deltas estimated from S speakers per accent (Proposition 1).
 

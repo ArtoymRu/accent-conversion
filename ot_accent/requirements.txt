@@ -12,3 +12,4 @@ textgrid
 openai-whisper
 jiwer
 speechbrain
+resemblyzer

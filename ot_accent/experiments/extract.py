@@ -23,7 +23,7 @@ def main():
     by_speaker = defaultdict(list)
     for u in corpus.utterances(cfg.l2_arctic, cfg.cmu_arctic):
         by_speaker[u.speaker].append(u)
-    assert by_speaker, "no utterances found: check l2_arctic and cmu_arctic in the config"
+    assert by_speaker, "no utterances found: check l2_arctic (and cmu_arctic) in the config"
     shared = sorted(set.intersection(*(set(u.utt for u in us) for us in by_speaker.values())))
     test, pool = set(shared[-cfg.test_utts:]), set(shared[-cfg.test_utts - cfg.pool_utts:-cfg.test_utts])
     print(f"{len(by_speaker)} speakers, {len(shared)} shared sentences, test {min(test)}..{max(test)}")

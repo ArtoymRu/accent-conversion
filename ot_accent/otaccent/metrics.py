@@ -83,7 +83,7 @@ def loso_accent_id(tab, p=None) -> dict:
 class Asr:
     """Whisper. asr(wav) -> text; Asr.wer(refs, hyps) with Whisper's English normaliser."""
 
-    def __init__(self, device="cuda", name="small.en"):
+    def __init__(self, device="cuda", name="base"):
         import whisper
         from whisper.normalizers import EnglishTextNormalizer
         self.model, self.norm = whisper.load_model(name, device=device), EnglishTextNormalizer()
@@ -97,8 +97,21 @@ class Asr:
         return jiwer.wer([self.norm(r) for r in refs], [self.norm(h) for h in hyps])
 
 
-class SpeakerEncoder:
-    """ECAPA-TDNN. enc(wav) -> unit vector; cosine of two voices is their dot product."""
+class Resemblyzer:
+    """GE2E d-vectors (the "SECS" of PACE). enc(wav at 16 kHz) -> unit vector."""
+
+    def __init__(self, device="cuda"):
+        from resemblyzer import VoiceEncoder
+        self.model = VoiceEncoder(device=device, verbose=False)
+
+    def __call__(self, wav) -> np.ndarray:
+        from resemblyzer import preprocess_wav
+        e = self.model.embed_utterance(preprocess_wav(np.asarray(wav, dtype=np.float32), source_sr=16000))
+        return e / np.linalg.norm(e)
+
+
+class Ecapa:
+    """ECAPA-TDNN trained on VoxCeleb. enc(wav at 16 kHz) -> unit vector."""
 
     def __init__(self, device="cuda"):
         import torch

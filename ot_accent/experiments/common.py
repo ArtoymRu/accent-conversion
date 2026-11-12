@@ -19,7 +19,7 @@ def setup(description) -> SimpleNamespace:
     cfg = SimpleNamespace(**yaml.safe_load(open(args.config)), synthetic=args.synthetic)
     if cfg.synthetic:
         cfg.cache, cfg.results = "cache_synthetic", "results_synthetic"
-        cfg.layers, cfg.source_accent = [cfg.edit_layer], "acc0"
+        cfg.layers, cfg.accents, cfg.pairs = [cfg.edit_layer], None, "cyclic"
         if not list(Path(cfg.cache).glob("*.npz")):
             write_synthetic_cache(cfg)
     cfg.cache, cfg.results = Path(cfg.cache), Path(cfg.results)
@@ -32,9 +32,21 @@ def load_table(cfg, layer) -> Table:
     files = sorted(cfg.cache.glob("*.npz"))
     assert files, f"no cache in {cfg.cache}: run experiments/extract.py (or pass --synthetic)"
     rows = [np.load(f) for f in files]
+    keep = [j for j, r in enumerate(rows) if cfg.accents is None or str(r["accent"]) in cfg.accents]
+    files, rows = [files[j] for j in keep], [rows[j] for j in keep]
     i = list(rows[0]["layers"]).index(layer)
     return Table(np.array([f.stem for f in files]), np.array([str(r["accent"]) for r in rows]),
                  *(np.stack([r[k][i] for r in rows]) for k in ("n", "sx", "sxx")))
+
+
+def accent_pairs(cfg, names) -> list[tuple[str, str]]:
+    """The (source, target) accent pairs named by cfg.pairs."""
+    names = list(names)
+    if cfg.pairs == "all":
+        return [(a, b) for a in names for b in names if a != b]
+    if cfg.pairs == "cyclic":
+        return [(a, names[(i + 1) % len(names)]) for i, a in enumerate(names)]
+    return [tuple(pair) for pair in cfg.pairs]
 
 
 def load_frames(cfg, speaker) -> SimpleNamespace:
@@ -63,8 +75,8 @@ def save_speaker(path, accent, layers, stats, frames, labels, is_test, texts, wa
 
 
 def write_synthetic_cache(cfg, speakers_per_accent=4, seed=0):
-    """The same cache layout, filled from a World: 7 accents, the first one playing `native`."""
-    world = World(n_accents=7, speakers_per_accent=speakers_per_accent, n_phones=39, dim=64, seed=seed)
+    """The same cache layout, filled from a World with six accents of four speakers."""
+    world = World(n_accents=6, speakers_per_accent=speakers_per_accent, n_phones=39, dim=64, seed=seed)
     Path(cfg.cache).mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(seed)
     sentence = lambda: np.r_[-np.ones(5, int), np.repeat(rng.permutation(world.K)[:25], 6), -np.ones(5, int)]

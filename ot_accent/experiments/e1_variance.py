@@ -1,7 +1,8 @@
 """E1 and E3. Where accent lives, and the placebo level of the accent terms.
 
-For every layer: the variance components of model (1), the same components
-with accent labels shuffled across speakers (the placebo), and how well a
+For every layer: the variance components of model (1), their range when each
+speaker is left out in turn, the same components with accent labels shuffled
+across speakers (the placebo), and how well a
 held-out speaker's accent is identified from the conditional view (profile)
 and from the global view (centre).
 
@@ -27,12 +28,15 @@ def main():
         p = tab.content()
         est = variance.components(tab, p)
         null = variance.permutation_null(tab, p, n_perm=200, seed=cfg.seed)
+        loo = variance.leave_one_speaker_out(tab, p)
         for k in PARTS:
             lo, hi = np.quantile([n[k] for n in null], [0.025, 0.975]) if k in ACCENT else (np.nan, np.nan)
+            shares = [r[k] / r["total"] for r in loo]
             rows.append(dict(layer=layer, component=k, variance=est[k], share=est[k] / est["total"],
+                             loo_min=min(shares), loo_max=max(shares),
                              placebo_lo=lo / est["total"], placebo_hi=hi / est["total"]))
         ids.append(dict(layer=layer, **metrics.loso_accent_id(tab, p)))
-    show(rows, ["layer", "component", "share", "placebo_lo", "placebo_hi"], "{:.4f}")
+    show(rows, ["layer", "component", "share", "loo_min", "loo_max", "placebo_lo", "placebo_hi"], "{:.4f}")
     print("\nleave-one-speaker-out accent identification (chance = 1 / number of accents)")
     show(ids, ["layer", "conditional", "global"])
     write_csv(cfg.results / "e1_variance.csv", rows)

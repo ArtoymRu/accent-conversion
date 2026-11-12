@@ -78,8 +78,8 @@ def _festvox_prompts(path: Path) -> dict:
     return dict(re.findall(r'\(\s*(\S+)\s+"(.*)"\s*\)', path.read_text()))
 
 
-def utterances(l2_root, cmu_root) -> list[Utterance]:
-    """Every utterance of both corpora that has audio and an alignment."""
+def utterances(l2_root, cmu_root=None) -> list[Utterance]:
+    """Every utterance that has audio and an alignment. CMU ARCTIC (accent "native") is optional."""
     out = []
     for accent, speakers in L2_ARCTIC.items():
         for spk in speakers:
@@ -90,7 +90,7 @@ def utterances(l2_root, cmu_root) -> list[Utterance]:
                 align = d / "textgrid" / f"{wav.stem}.TextGrid"
                 if align.exists():
                     out.append(Utterance(spk, accent, wav.stem, wav, align))
-    for accent, speakers in CMU_ARCTIC.items():
+    for accent, speakers in (CMU_ARCTIC.items() if cmu_root else ()):
         for spk in speakers:
             d = Path(cmu_root) / f"cmu_us_{spk}_arctic"
             for wav in sorted((d / "wav").glob("*.wav")):

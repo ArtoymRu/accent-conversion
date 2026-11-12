@@ -14,7 +14,7 @@ with more speakers per accent extends the curve.
 """
 import numpy as np
 
-from experiments.common import load_table, setup, show, style, write_csv
+from experiments.common import accent_pairs, load_table, setup, show, style, write_csv
 from otaccent import variance
 from otaccent.synthetic import World
 
@@ -24,15 +24,15 @@ KINDS = {"global": "speaker", "conditional": "speaker x content"}
 def main():
     cfg = setup(__doc__)
     if cfg.synthetic:        # more speakers than any cache, to see the whole curve
-        tab = World(n_accents=7, speakers_per_accent=32, n_phones=39, dim=64, seed=cfg.seed).table(60)
+        tab = World(n_accents=6, speakers_per_accent=32, n_phones=39, dim=64, seed=cfg.seed).table(60)
     else:
         tab = load_table(cfg, cfg.edit_layer)
     p, comp, noise = tab.content(), variance.components(tab), variance.sampling_noise(tab)
-    targets = [a for a in np.unique(tab.accents) if a != cfg.source_accent]
+    pairs = accent_pairs(cfg, np.unique(tab.accents))
     max_S = min(len(tab.idx(a)) for a in np.unique(tab.accents)) // 2
     rows = []
     for S in [s for s in (1, 2, 4, 8, 16, 32) if s <= max_S]:
-        e = [variance.delta_error(tab, cfg.source_accent, t, S, p, seed=cfg.seed) for t in targets]
+        e = [variance.delta_error(tab, a, b, S, p, n_draws=50, seed=cfg.seed) for a, b in pairs]
         for kind, part in KINDS.items():
             rows.append(dict(S=S, delta=kind,
                              error=float(np.mean([x[f"{kind} error"] for x in e])),

@@ -141,9 +141,9 @@ def speaker_count(plt, cfg, out):
 
 def _e2(cfg):
     rows = read_csv(cfg.results / "e2_maps.csv")
-    base = {(r["fold"], r["target"]): r for r in rows if r["system"] == "identity"}
+    base = {(r["fold"], r["source"], r["target"]): r for r in rows if r["system"] == "identity"}
     for r in rows:
-        r["d_accent"] = r["accent"] - base[(r["fold"], r["target"])]["accent"]
+        r["d_accent"] = r["accent"] - base[(r["fold"], r["source"], r["target"])]["accent"]
     return rows
 
 

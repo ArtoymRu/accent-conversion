@@ -1,7 +1,8 @@
 __pycache__/
 .pytest_cache/
+data/
 cache/
 cache_synthetic/
-results/
 results_synthetic/
-data/
+# result tables and figures are committed; audio is not
+results/*_audio/

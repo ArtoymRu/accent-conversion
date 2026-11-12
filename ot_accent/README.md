@@ -1,582 +1,538 @@
 # Accent Is a Conditional
 
-Experiments for the paper *"Accent Is a Conditional: Content-Conditional Optimal
-Transport for Accent Transfer in Frozen Speech Representations"*
-(target: Interspeech 2027).
+Working repository for a paper on accent transfer by editing frozen speech
+representations. Target: Interspeech 2027.
 
 > [!IMPORTANT]
-> **Status, 11 Nov 2026.** The code runs and its mathematics is tested on a
-> synthetic world. **No real accented speech has been through it yet.** Every
-> figure on this page is synthetic and shows the *shape* of a result, not a
-> result. The first real run is step 1 of [Next steps](#7-next-steps).
+> **Status, 12 Nov 2026. Nothing here has been measured on accented speech.**
+> The code exists and its estimators are tested, the channel has been run on a
+> single clip of real speech, and that is all. Every statement below about
+> accent is a hypothesis with the experiment that will test it. No number from
+> earlier pilots or from AccentFlow is used as evidence; they are the source of
+> the ideas only.
 
-**Contents:** [0 In plain words](#0-in-plain-words) ·
-[1 The idea](#1-the-idea) ·
-[2 Three claims](#2-three-claims-three-experiments) ·
-[3 What changes from `accent_l2`](#3-what-changes-from-accent_l2) ·
-[4 The family of maps](#4-the-family-of-maps) ·
-[5 Code](#5-code) ·
-[6 Experiments](#6-experiments) ·
-[7 Next steps](#7-next-steps) ·
-[8 Decisions for the call](#8-decisions-for-the-call) ·
-[9 What is checked](#9-what-is-checked-and-what-is-not) ·
-[10 Spec for E7](#10-spec-for-e7-rhythm)
-
----
-
-## 0. In plain words
-
-Read this first. The rest of the page is the same thing with formulas.
-
-**Where it started.** AccentFlow moved accent with one vector: the difference
-between the centroids of two groups of speakers. The accent moved, and the
-voice moved with it. This paper asks why, and how to avoid it.
-
-**The main thought.** An accent is not "everything sounds a bit different".
-It is "particular sounds are pronounced differently". A Hindi speaker has a
-different /t/ and a different /w/, while many vowels are almost like anyone
-else's. Add the same vector to every frame and you shift the speaker's
-average, which is their voice, not the individual sounds.
-
-**The model in words.** Every frame (a WavLM vector) is a sum of four things:
-
-1. which sound it is (the phone);
-2. whose voice it is (a shift common to all sounds of that speaker);
-3. how this accent bends this particular sound;
-4. how this person bends this particular sound.
-
-The accent we want to move is the third.
-
-**Why one vector is bad.** We have 4 speakers per accent. The difference of
-the averages of two groups is "the difference between accents" plus "which
-people we happened to record". With four people the second part is large and
-the two cannot be told apart.
-
-**What we do instead.**
-
-1. Subtract from every speaker their own average. The voice is gone.
-2. For each of the 39 phones, see where it sits relative to the speaker's centre.
-3. Average over the speakers of an accent and take the difference between two
-   accents. The result is a table of 39 vectors, one per phone.
-4. To edit, add to every frame the vector of its phone.
-
-The speaker's average does not change, so the voice stays where it was.
-
-**Where optimal transport comes in.** All methods are versions of one task,
-"move the frames of accent A onto the frames of accent B":
-
-- a shift (move the means only): our method;
-- a shift and a scale (the variances too);
-- replacing a frame by the nearest frames of target speakers (kNN, Sinkhorn).
-
-The third takes frames from other people and brings their voice along. That
-is what the pilot saw: the entropic map gave the strongest accent shift and
-replaced the voice.
-
-**The experiments are four questions.**
-
-| | Question |
-|---|---|
-| **E0** | Does speech still sound normal after WavLM → vocoder when nothing is changed? |
-| **E1** | What share of the spread of frames belongs to each of the four terms? Control: shuffle the accent labels between speakers; the accent shares must drop to zero. |
-| **E4** | How many speakers does an accent direction need? Prediction: the error falls as 1/S, and it is much smaller for the per-phone table than for the single vector. |
-| **E2** | Every map, on speakers that were not used to fit it: how much accent was added, how much voice was lost. |
-
-**What is needed now.** Only the first step: run the feature extraction and
-E0 on Colab and listen. Everything else depends on it.
+**Contents:** [1 Question](#1-question) ·
+[2 Where the field is](#2-where-the-field-is) ·
+[3 Model](#3-model) ·
+[4 Measurement](#4-measurement) ·
+[5 Experiments, in order](#5-experiments-in-order) ·
+[6 Protocol](#6-protocol) ·
+[7 Code](#7-code) ·
+[8 What is verified](#8-what-is-verified) ·
+[9 Threats to validity](#9-threats-to-validity) ·
+[10 Timeline](#10-timeline) ·
+[References](REFERENCES.md)
 
 ---
 
-## 1. The idea
+## 1. Question
 
-A Hindi accent is not "more of something" in every frame. It is a different
-/t/, a different /w/, a different vowel in *cat*. So accent is a property of
-how **each sound** is realised, and moving it means moving each sound
-separately. Anything that moves all frames together mostly moves the speaker.
+Editing a frozen speech representation can move an utterance towards a target
+accent. Every published version of this pays for it in speaker identity: the
+more accent, the less the voice is the same person. We ask two things.
 
-We write one frame of speaker $s$ saying phone $c$ as
+1. **Why do accent evidence and voice loss rise together?** Is it a property
+   of accent, of the maps used, or of how accent is measured?
+2. **Is there an edit that moves the accent and provably leaves the voice
+   where it was,** and does a listener hear it?
 
-```math
-x \;=\; \underbrace{\mu_c}_{\text{the sound}}
- \;+\; \underbrace{u_s}_{\text{the voice}}
- \;+\; \underbrace{v_{a(s),c}}_{\text{accent bends the sound}}
- \;+\; \underbrace{w_{s,c}}_{\text{this speaker bends the sound}}
- \;+\; \varepsilon
-```
-
-and the editor is a translation with two knobs:
-
-```math
-T_{\lambda,\kappa}(x, c) \;=\; x \;+\; \lambda\,\Delta_c \;+\; \kappa\,\delta
-```
-
-| Symbol | What it is | How it is estimated |
-|---|---|---|
-| $`\Delta_c`$ | conditional delta: how the target accent bends phone $c$ relative to the source accent | difference of **speaker-centred** phone means, averaged over reference speakers |
-| $\delta$ | global delta: difference of the mean voices of the two groups | difference of speaker centres (this is AccentFlow at frame level) |
-| $\lambda$ | segmental strength | leaves the speaker's centre exactly where it was |
-| $\kappa$ | global strength | moves the voice centre; cannot be told apart from "the average voice of the people we recorded" |
+**In plain words.** An accent is not "everything sounds a bit different". It
+is "particular sounds are pronounced differently". If that is right, an edit
+should act on each sound separately, relative to the speaker's own average,
+and anything that moves all frames together, or replaces frames by somebody
+else's, moves the speaker.
 
 <p align="center"><img src="docs/fig_idea.png" width="760"><br>
-<em>A toy in two dimensions. Left: the two groups differ mostly by who is in them. Right: with each speaker's centre removed, the accent is a different displacement for each phone.</em></p>
+<em>Schematic of the idea, drawn, not measured. Left: two accent groups differ mostly by who is in them. Right: with each speaker's centre removed, the accent would be a different displacement for each phone.</em></p>
 
-The whole pipeline, with nothing trained:
+---
 
-```mermaid
-flowchart LR
-    A["waveform"] --> B["WavLM-Large, layer 6<br/>frozen"]
-    T["transcript"] --> F["forced alignment<br/>canonical phone per frame"]
-    B --> E["x + λ·Δ_c + κ·δ"]
-    F --> E
-    S["reference speakers<br/>per-phone means"] --> E
-    E --> V["HiFi-GAN of kNN-VC<br/>frozen"]
-    V --> W["waveform, new accent"]
+## 2. Where the field is
+
+Read status and links for everything below are in [REFERENCES.md](REFERENCES.md).
+
+| Work | What it does | What it leaves open for us |
+|---|---|---|
+| **PACE** (Qu et al., Sep 2026) | Accent conversion by editing frozen WavLM-Large layer-6 frames and vocoding with the kNN-VC backend, on L2-ARCTIC. Accent directions from a frame-level PLS fit against accent labels; frames moved by entropic transport, then fused with retrieved target-accent frames. | No phonetic conditioning, no per-speaker centring. Accent is scored by one classifier fine-tuned on L2-ARCTIC; no listening test. The authors report that accent accuracy rises as speaker similarity falls and name "stronger source-preserving edits" and listening tests as future work. Code is not released (the repository holds a README only). |
+| **StateVC** (Qu et al., Oct 2026) | Training-free voice conversion by state-wise mean shifts in WavLM space, with posterior-weighted updates and a strength parameter. States come from a GMM fitted to one source–reference pair. Code released. | The same class of map as ours (a translation per content cell). It is used to *change* the voice from one utterance pair; we use it to change accent while *keeping* the voice, with cells given by the transcript and statistics pooled over speakers. |
+| **Phoneme-aware accent identification** (Qu et al., Sep 2026) | Speaker-disjoint L1 identification from phoneme-aligned units instead of one utterance embedding. | Establishes for *identification* that accent cues are phoneme-dependent. It does not quantify how much of the representation they occupy, nor edit them. |
+| **kNN-VC** (Baas et al., 2023) | Voice conversion by replacing each frame with the mean of its nearest target frames; provides the encoder and vocoder we use. | The barycentric map in its purest form. |
+| **MKL-VC** (Lobashev et al., 2025) | Voice conversion by a factorised Gaussian transport map in WavLM space. | The affine row of our family of maps, for voice. |
+| **Liu, Tang, Goldwater** (2023) | Speaker and phone variance lie in nearly orthogonal subspaces, for APC and CPC models. | Motivation for an additive speaker term. Not shown for WavLM, and silent on accent and on interactions. |
+
+**What is left to show.** That the trade-off has an explanation, that the
+explanation predicts which edit avoids it, and that listeners agree. The idea
+that accent is segmental is not new, and neither is a per-cell translation.
+The combination below, with the analysis and the evaluation, is what we have
+not found in print. The same group that wrote PACE is the most likely to
+publish it first.
+
+**Hypotheses.**
+
+- **H1.** In frozen WavLM frames, accent appears as an *accent × phone*
+  interaction that is above its placebo level, and it is estimable from few
+  speakers, while a global accent direction is not.
+- **H2.** A per-phone translation of speaker-centred frames moves accent
+  evidence on speakers it was not fitted on, and a barycentric (retrieval) map
+  moves it together with the voice.
+- **H3.** At matched accent evidence, the translation preserves speaker
+  identity better than retrieval-based editing, by automatic metrics and by
+  listeners.
+
+---
+
+## 3. Model
+
+### 3.1 Notation
+
+A frozen encoder maps a waveform to frames $x_1,\dots,x_T\in\mathbb{R}^d$
+(WavLM-Large, layer 6, $d=1024$, one frame per 20 ms). Each frame has
+
+- a content label $c\in\{1,\dots,K\}$: the phone it *should* realise, from the
+  transcript by forced alignment ($K=39$);
+- a speaker $s$;
+- an accent $a(s)$. Speakers are nested in accents: nobody has two.
+
+Content is canonical on purpose. A cluster index computed from the frames is
+already accented: a retroflex /t/ may fall in another cluster than an alveolar
+one, and conditioning on it would hide the difference we want to move.
+
+### 3.2 Decomposition
+
+```math
+x \;=\; \mu_c \;+\; u_s \;+\; v_{a(s),c} \;+\; w_{s,c} \;+\; \varepsilon ,
+\qquad \mathbb{E}[\varepsilon \mid c,s]=0
 ```
 
----
+| Term | Meaning | Constraint |
+|---|---|---|
+| $`\mu_c`$ | the sound: mean frame of phone $c$ | |
+| $`u_s`$ | the voice: offset of speaker $s$, the same for every phone. It contains any global accent offset $`m_a=\mathbb{E}[u_s\mid a]`$ | |
+| $`v_{a,c}`$ | how accent $a$ bends phone $c$ | $`\sum_c p_c\,v_{a,c}=0`$ |
+| $`w_{s,c}`$ | how speaker $s$ personally bends phone $c$ | $`\sum_c p_c\,w_{s,c}=0`$, $`\mathbb{E}[w_{s,c}\mid a]=0`$ |
+| $`\varepsilon`$ | everything else: context, position in the phone, prosody, noise | |
 
-## 2. Three claims, three experiments
+$p_c$ is a fixed reference distribution over phones.
 
-| | Claim | In the paper | Experiment | Refuted if |
+**This is not an assumption about the data.** Take the table of mean frames
+per (speaker, phone). Any such table splits uniquely into a column effect, a
+row effect and an interaction, given the constraints: a two-way layout with
+speakers nested in accents. The constraints make the interaction terms sum to
+zero over phones, so an edit along $v$ cannot move a speaker's centre. The
+real assumptions are listed in 3.8.
+
+### 3.3 Statistics
+
+With $`\bar x_{s,c}`$ the mean frame of speaker $s$ on phone $c$:
+
+```math
+\bar x_s=\sum_c p_c\,\bar x_{s,c}\quad\text{(speaker centre)},
+\qquad
+r_{s,c}=\bar x_{s,c}-\bar x_s\quad\text{(profile)}
+```
+
+For source accent $a$ and target accent $b$ with $S$ reference speakers each:
+
+```math
+\hat\delta=\frac1S\sum_{s\in b}\bar x_s-\frac1S\sum_{s\in a}\bar x_s
+\qquad\qquad
+\hat\Delta_c=\frac1S\sum_{s\in b}r_{s,c}-\frac1S\sum_{s\in a}r_{s,c}
+```
+
+$\hat\delta$ (one vector) estimates $m_b-m_a$. $`\hat\Delta_c`$ (one vector
+per phone) estimates $`\Delta_c=v_{b,c}-v_{a,c}`$.
+
+### 3.4 What finitely many speakers identify
+
+**Proposition 1.** With $S$ speakers per accent drawn independently and many
+frames per cell,
+
+```math
+\mathbb{E}\,\lVert\hat\delta-(m_b-m_a)\rVert^2=\frac{2}{S}\,\mathrm{tr}\,\Sigma_u ,
+\qquad
+\mathbb{E}\,\lVert\hat\Delta_c-\Delta_c\rVert^2=\frac{2}{S}\,\mathrm{tr}\,\Sigma_{w,c}
+```
+
+where $`\Sigma_u=\mathrm{Cov}(u_s\mid a)`$ and
+$`\Sigma_{w,c}=\mathrm{Cov}(w_{s,c}\mid a)`$. Moreover $`\hat\Delta_c`$ is
+unchanged by any per-speaker translation $x\mapsto x+t_s$.
+
+*Why.* $`\bar x_s=\bar\mu+u_s`$ up to noise, so $\hat\delta$ is a difference
+of two averages of $S$ speaker offsets. In $`r_{s,c}`$ the offset $u_s$ has
+cancelled, and so would any $t_s$; what remains is
+$`(\mu_c-\bar\mu)+v_{a,c}+w_{s,c}`$, and the difference of two accent averages
+leaves $\Delta_c$ plus two averages of $S$ personal terms.
+
+*Reading.* The global direction is as noisy as speakers are different. The
+conditional direction pays only for how speakers personally realise each
+phone. Whether $`\mathrm{tr}\,\Sigma_w`$ is small enough at $S=3$ is an
+empirical question (E1, E4). And whether $m_a$ is "accent" or "the average
+voice of the people recorded" cannot be decided from the data at all, so the
+editor keeps the two apart.
+
+### 3.5 Transfer as conditional transport
+
+Let $`\mu_{a\mid c}`$ be the law of speaker-centred frames of accent $a$ on
+phone $c$. Moving accent without moving content is
+
+```math
+T^\star=\arg\min_T\;\mathbb{E}\,\lVert x-T(x,c)\rVert^2
+\quad\text{s.t.}\quad T(\cdot,c)_\#\,\mu_{a\mid c}=\mu_{b\mid c}\ \ \forall c
+```
+
+which is optimal transport with a cost that forbids changing the phone. For
+Gaussian conditionals the solution is closed-form,
+$`T^\star(x,c)=m_{b,c}+A_c(x-m_{a,c})`$ with $A_c$ the Bures–Wasserstein
+matrix. Restricting the cells and the map class gives a family in which
+published methods are points:
+
+| Cells | Map on each cell | Name in `e2_maps.py` | Closest published form | Parameters |
 |---|---|---|---|---|
-| **1** | Accent lives in the **accent × content** term. The global accent term cannot be separated from the speaker with 4 speakers per accent. | Proposition 1 | [E1](#e1--where-accent-lives-with-the-placebo-of-e3), [E4](#e4--how-many-speakers-does-a-direction-need) | accent × content is inside its placebo band at every layer |
-| **2** | Delta vectors, per-unit steering, Gaussian maps and retrieval are **one conditional transport problem** with different restrictions. | Proposition 2 | [E2](#e2--every-map-on-held-out-speakers) compares them on one protocol | conditional maps are no better than global ones on held-out speakers |
-| **3** | **Translations carry the voice; barycentres replace it.** That is why retrieval editors lose identity as accent grows. | Proposition 3 | [E2](#e2--every-map-on-held-out-speakers), identity columns | barycentres keep identity as well as translations at equal accent |
-
----
-
-## 3. What changes from `accent_l2`
-
-The pilot in `accent_l2/` already found the pattern the paper explains:
-unit-conditional mean shift moved accent-ID by +0.19 at ΔWER +0.013 and
-speaker top-1 −0.12; the entropic map moved it by +0.58 and replaced the
-voice; global maps did nothing on held-out speakers. This folder keeps the
-protocol and changes four things.
-
-| | `accent_l2` (pilot) | `ot_accent` (paper) | Why |
-|---|---|---|---|
-| **Channel** | HuBERT-base L6 → own mel decoder → HiFi-GAN (LJSpeech) | WavLM-Large L6 → HiFi-GAN of kNN-VC, both frozen | The decoder was the bottleneck ("robovoice", speaker cosine 0.60–0.68). The kNN-VC vocoder inverts these frames directly; nothing to train. |
-| **Content** | k-means units, refit per fold | canonical phones from the transcript (forced alignment shipped with L2-ARCTIC) | A cluster index is already accented: a retroflex /t/ can fall in another cluster and hide the difference we want to move. In a translation cascade the transcript is free. |
-| **Direction** | accent → accent (6 pairs) | native → accent (CMU ARCTIC speakers → 6 accents) | It is what the cascade needs, the least covered in the literature, and the prompts are the same sentences, so content is parallel. |
-| **Accent metric** | accent-ID on utterance means, raw and NAP | cosine of the speaker-centred **phone profile** to the target accent | A centred map does not change the utterance mean by construction (`run_frame_ot.py` says so in its docstring). An utterance-mean classifier cannot see it. |
-
-Kept as they are, to be reused:
-
-| From `accent_l2` | Use here |
-|---|---|
-| LOSO folds, `fold_heldout(f) = sorted(speakers)[f]` | identical rule in `e2_maps.py` |
-| `identity` as the baseline, not `original` | same: every number is a difference to identity resynthesis |
-| `gate_check.py` | became `e0_channel.py` |
-| `resynth/audio_metrics.py` (Whisper, ECAPA; tested) | fallback if `otaccent/metrics.py` misbehaves; it has not been run |
-| `EntropicOTMap`, full Bures–Wasserstein | to port as two more systems (step 4) |
-| NAP classifier, `speaker_probe.py` | second opinion on accent and identity (step 4) |
-| `docs/HUMAN_EVAL_PROTOCOL.md` and the web form | the listening test E8, with new systems |
-
-New here: the variance decomposition with a placebo (E1), the 1/S law (E4),
-the placebo map, and `profile_kept`, which measures whether the speaker's
-personal way of saying each phone survived.
-
----
-
-## 4. The family of maps
-
-All of these solve the same problem, *move the frames of accent a onto those
-of accent b without moving content*, under different restrictions. Parameters
-grow downwards, and so does the number of speakers needed to estimate them.
-
-| Content cells | Map | Name in `e2_maps.py` | In the literature | Parameters |
-|---|---|---|---|---|
-| 1 | translation | `global shift` | delta vector (AccentFlow), activation steering | $d$ |
+| 1 | translation | `global shift` | delta vectors, activation steering | $d$ |
 | 1 | diagonal affine | `global affine` | — | $2d$ |
-| 1 | barycentric | `global barycentre` | kNN-VC | none |
-| 39 phones | translation | **`conditional shift`** | `ubw-mean` + `speaker_norm` in the pilot | $39\,d$ |
-| 39 phones | diagonal affine | `conditional affine` | `ubw-diag` | $78\,d$ |
-| 39 phones | barycentric | `conditional barycentre` | `uent`; retrieval editing (PACE, to confirm) | none |
-| same accent on both sides | translation | `placebo` | — | measures pure speaker leak |
+| 1 | barycentric | `global barycentre` | kNN-VC; the retrieval stage of PACE | none |
+| a few GMM states per pair | translation | — | StateVC (for voice) | per pair |
+| 39 phones | translation, speaker-centred | **`conditional shift`** | — | $39\,d$ |
+| 39 phones | diagonal affine | `conditional affine` | per-cell Gaussian maps (MKL-VC is the full-covariance, global case) | $78\,d$ |
+| 39 phones | barycentric | `conditional barycentre` | — | none |
+| same accent on both sides | translation | `placebo` | — | speaker leak only |
+
+Parameters grow downwards within a block, and so does the number of speakers
+needed to estimate them. PACE's first stage, a transport-weighted shift inside
+a global PLS subspace, is not in `e2_maps.py` yet (see R1).
+
+### 3.6 What a map does to the speaker
+
+**Proposition 3.** Let $`x=\mu_c+u_s+v_{a,c}+w_{s,c}+\varepsilon`$.
+
+1. *Translation.* $`T(x)=x+\Delta_c=\mu_c+u_s+v_{b,c}+w_{s,c}+\varepsilon`$.
+   The same speaker, the same personal terms, accent $b$.
+2. *Barycentre.* For any coupling $\pi$ of source and target frames,
+   $`T(x)=\mathbb{E}_\pi[Y\mid X=x]`$ equals
+   $`\mu_c+v_{b,c}+\mathbb{E}_\pi[u_{s'}+w_{s',c}+\varepsilon'\mid x]`$: the
+   speaker terms become convex combinations of those of the *target*
+   speakers. Also $`\mathrm{Cov}\,T(X)\preceq\mathrm{Cov}\,Y`$, by the law of
+   total variance.
+
+*Reading.* A translation moves the accent and carries the voice with it. A
+barycentre fetches the accent together with somebody else's voice. Centring
+the frames before a barycentric map removes $`u_{s'}`$ but not $`w_{s',c}`$.
+If H2 holds, this is the mechanism behind the trade-off reported for
+retrieval-based editing.
+
+*Residual leak of a translation.* $`\hat\Delta_c`$ is an average over
+reference speakers, so by Proposition 1 it carries their personal terms with
+variance $`\tfrac2S\,\mathrm{tr}\,\Sigma_{w,c}`$. Prediction: the identity
+cost of the conditional shift falls as $1/S$. The `placebo` map measures it
+directly.
+
+(The numbering follows the paper draft, where Proposition 2 is the statement
+that the rows of the table in 3.5 solve one problem under nested restrictions.)
+
+### 3.7 The editor
+
+```math
+T_{\lambda,\kappa}(x,c)=x+\lambda\,\Delta_c+\kappa\,\delta
+```
+
+$\lambda$ is segmental strength and leaves the speaker centre untouched;
+$\kappa$ is global strength (frame-level AccentFlow). For an optimal map
+$T^\star$, $`(1-\lambda)\,\mathrm{id}+\lambda T^\star`$ is displacement
+interpolation, so strength is a position on a transport geodesic. Silence is
+never edited.
+
+### 3.8 Assumptions that can fail
+
+- **Accent changes the mean of a phone, not the shape of its distribution.**
+  If it changes the shape, a shift is not enough (compare `conditional affine`).
+- **Everything inside a phone is averaged.** Context and position go into
+  $\varepsilon$. Accent that lives in transitions between sounds is lost.
+- **Speakers are an independent sample.** The $1/S$ law depends on it.
+- **The label is the intended phone,** not the one produced. A substitution
+  that crosses phone categories is only partly a shift within the category.
+- **The vocoder responds to shifted frames.** They are off the manifold it
+  was trained on.
 
 ---
 
-## 5. Code
+## 4. Measurement
 
-About 1,250 lines. The library is numpy; torch is needed only for the encoder,
-the vocoder and the audio metrics.
+### 4.1 Variance components
+
+Split each speaker's utterances in two halves. For centres and for
+$p$-weighted profiles, average three kinds of inner product:
+
+- **self**: the same speaker, half against half;
+- **same**: two different speakers of one accent;
+- **diff**: two speakers of different accents.
+
+Different speakers and different halves have independent noise, and any term
+common to everybody cancels in a difference. Hence, without bias under a
+random-effects reading of the model:
+
+| Component | Estimator |
+|---|---|
+| content | diff (profiles) |
+| speaker | self − same (centres) |
+| accent, global | same − diff (centres) |
+| speaker × phone | self − same (profiles) |
+| **accent × phone** | **same − diff (profiles)** |
+| residual | $`\mathbb{E}\lVert x\rVert^2`$ − self (centres) − self (profiles) |
+
+`variance.components`. Shares are relative to the total.
+
+### 4.2 Placebo and spread
+
+- **Placebo:** shuffle accent labels across speakers and recompute. The
+  accent terms must fall to a band around zero (`variance.permutation_null`).
+- **Leave one speaker out:** with four speakers per accent no confidence
+  interval deserves the name; the range of each component when each speaker
+  is removed shows how much it hangs on one person
+  (`variance.leave_one_speaker_out`).
+
+### 4.3 Error of a direction
+
+Estimate a delta twice, from disjoint sets of $S$ speakers. Half the squared
+distance between the two is the error of one estimate; their inner product is
+the squared norm of the true delta (`variance.delta_error`). Proposition 1
+predicts the error from the components of 4.1, with nothing fitted.
+
+### 4.4 Accent and identity from frames
+
+All computed on frames re-encoded from the vocoded audio, so an edit must
+survive resynthesis to count.
+
+| Quantity | Definition | What it cannot show |
+|---|---|---|
+| `accent` | cosine between the edited speaker's profile and the target accent's mean profile, both relative to the mean over accents | lives in the space we edit; not a listener |
+| `accent_hit` | 1 if the target accent is the nearest | same |
+| `centre_shift` | displacement of the content-balanced centre, in typical distances between speakers | sees only the global part of the voice |
+| `profile_kept` | cosine between the personal profile after and before, with the span of accent profiles projected out | accent subspace is estimated from few speakers |
+
+An utterance-level mean cannot see a conditional edit at all, because
+$`\sum_c p_c\,\Delta_c=0`$. Any accent metric built on utterance means is
+blind to it by construction.
+
+### 4.5 From audio
+
+Word error rate with Whisper; speaker cosine to the original recording with
+Resemblyzer (the "SECS" of PACE) and with ECAPA-TDNN. All differences are
+taken to identity resynthesis through the same channel, not to the original.
+
+### 4.6 Not yet in the code
+
+- An accent metric in an **independent** encoder, speaker-disjoint.
+- The classifier PACE uses, to report on their scale.
+- A listening test. No automatic number replaces it.
+
+---
+
+## 5. Experiments, in order
+
+Each step has a pass condition. Nothing later is interpretable if an earlier
+gate fails.
+
+```mermaid
+flowchart TD
+    R0["R0 channel: is resynthesis clean?"] -->|yes| R1["R1 reproduce the retrieval baseline on PACE's protocol"]
+    R0 -->|no| X0["no audio claims: analysis only"]
+    R1 --> E1["E1 variance: is accent x phone above placebo?"]
+    E1 -->|yes| E4["E4 speaker count: does the 1/S law hold?"]
+    E1 -->|no| X1["H1 is false: write the negative result"]
+    E4 --> E2["E2 maps on held-out speakers, with placebo and strength"]
+    E2 -->|edit survives the vocoder| E8["E8 listening test"]
+    E2 -->|it does not| X2["richer map, or analysis paper"]
+    E8 --> W["write"]
+```
+
+### R0. Channel gate (`e0_channel.py`)
+
+*Question.* Does WavLM → HiFi-GAN resynthesis, with nothing edited, keep the
+words and the voice of L2-ARCTIC speakers?
+*Pass.* WER and speaker cosines close to the original for both public
+vocoders, and `results/e0_audio/` does not sound robotic.
+
+### R1. Reproduce the baseline
+
+*Question.* Do we recover published numbers on the published protocol?
+*Method.* `global barycentre` at strength 0.7 and 1.0 is, as far as the paper
+describes it, PACE's "original WavLM retrieval" and "reference replacement".
+Run it on accent → accent pairs of L2-ARCTIC and score with their metrics.
+*Pass.* Speaker similarity and WER in the neighbourhood of their table.
+*Open.* Their accent classifier has to be located; their first stage (PLS
+subspace and unbalanced transport) has to be reimplemented from the paper, and
+the subspace dimension is not stated there.
+
+### E1. Where accent lives, with the placebo (`e1_variance.py`)
+
+*Question.* Is there an accent × phone component, at which layers, how large?
+*Method.* 4.1 and 4.2, for layers 3, 6, 9, 12, 18, 24, on the six L2 accents.
+Also leave-one-speaker-out accent identification from the profile and from
+the centre.
+*Supports H1 if* accent × phone lies above its placebo band and the profile
+identifies accent better than the centre.
+*Refutes H1 if* it is inside the band at every layer.
+
+### E4. How many speakers (`e4_speaker_count.py`)
+
+*Question.* Is the conditional direction above its own noise at $S\le 3$?
+*Method.* 4.3. L2-ARCTIC allows $S=1,2$ only.
+*Supports H1 if* measured errors match $2/S$ times the components of E1 and
+the conditional error is below its signal while the global one is not.
+*Limit.* The curve beyond $S=2$ stays a prediction until a corpus with more
+speakers per accent is used.
+
+### E2. Every map on held-out speakers (`e2_maps.py`)
+
+*Question.* H2 and H3.
+*Method.* Section 6. The `placebo` system is E3 in audio; several strengths
+give E6.
+*Supports H2 if* `conditional shift` raises accent evidence above `placebo`
+after the vocoder, and barycentres raise it with a larger `centre_shift` and a
+lower `profile_kept`.
+*Supports H3 if* at matched accent evidence the translation has the higher
+speaker cosine.
+*Refutes H2 if* the shift is indistinguishable from the placebo at every
+strength.
+
+### E8. Listening test
+
+*Question.* Do listeners hear the target accent and the same voice?
+*Method.* The protocol and web form in `accent_l2/docs/HUMAN_EVAL_PROTOCOL.md`,
+with systems original, identity, `conditional shift`, the retrieval baseline.
+*This is the only evidence for the word "transfer".*
+
+### Later, if time allows
+
+E5: k-means units against canonical phones. E7: phone durations by
+one-dimensional transport ([spec](docs/E7_durations.md)). Native → accented
+direction with a second corpus, for the translation cascade.
+
+---
+
+## 6. Protocol
+
+- **Data.** L2-ARCTIC: 24 speakers, six first languages, four speakers each,
+  the same prompts for everyone, phone alignments shipped with the corpus.
+- **Folds.** Fold $f$ holds out the $f$-th speaker (sorted by name) of every
+  accent; four folds. A held-out speaker enters no statistic, no reference
+  profile and no retrieval pool.
+- **Utterances.** The same sentences are held out as test utterances for
+  every speaker and enter no statistic.
+- **Pairs.** Accent → accent, all 30 ordered pairs by default, as in PACE.
+- **Baseline for every number.** Identity resynthesis through the same
+  channel.
+- **Second corpus.** CMU ARCTIC can be added as an accent `native`. It is off
+  by default: it was recorded elsewhere and labelled by another aligner, and a
+  systematic difference in boundaries would look like an accent × phone effect
+  that the placebo cannot catch.
+
+---
+
+## 7. Code
 
 ```
 otaccent/
-  corpus.py      L2-ARCTIC and CMU ARCTIC: speakers, accents, phone alignments
+  corpus.py      L2-ARCTIC (and optionally CMU ARCTIC): speakers, accents, alignments
   features.py    the channel: WavLM-Large layer 6 <-> HiFi-GAN (kNN-VC checkpoints)
-  stats.py       Table of sufficient statistics; the two deltas
+  stats.py       Table of sufficient statistics; centres, profiles, the two deltas
   maps.py        editors: shift, diagonal Gaussian map, barycentre
-  variance.py    variance components, placebo, the 1/S law
-  metrics.py     accent from the phone profile; WER; speaker cosine
-  synthetic.py   a world that obeys the model, with known components
-experiments/     extract.py, e0_channel.py, e1_variance.py, e2_maps.py, e4_speaker_count.py,
-                 overview_figures.py (the figures on this page, from the result files)
-tests/           the propositions, checked on the synthetic world
+  variance.py    components, placebo, leave-one-speaker-out, error of a delta
+  metrics.py     accent from the phone profile; WER; speaker cosines
+  synthetic.py   a world that obeys the model with known components (for tests)
+experiments/     extract.py, e0_channel.py, e1_variance.py, e4_speaker_count.py, e2_maps.py,
+                 overview_figures.py (summary figures from the result files; also draws the schematic)
+tests/           the propositions as unit tests
 config.yaml      paths and the few numbers that matter
 ```
 
-One idea carries most of it: **everything is a function of one table**, the
-sum and sum of squares of frames per (speaker, half of the utterances, phone).
-`extract.py` fills it once on a GPU; E1, E4 and every fitted map then run in
-seconds on a laptop.
-
-Fitting and applying the main map is four lines:
+Everything in E1 and E4, and every fitted map, is a function of one table:
+the sum and sum of squares of frames per (speaker, half, phone).
+`extract.py` fills it once on a GPU; the rest runs on a laptop.
 
 ```python
 from otaccent import maps
 from otaccent.stats import conditional_delta, global_delta
 
-p, m = tab.content(), tab.means()                  # content distribution, (speakers, 39, 1024) phone means
-src, tgt = tab.idx("native", exclude=held), tab.idx("hindi", exclude=held)
+p, m = tab.content(), tab.means()                  # p_c and the (speakers, 39, 1024) phone means
+src, tgt = tab.idx("hindi", exclude=held), tab.idx("korean", exclude=held)
 Delta = conditional_delta(m, p, src, tgt)          # (39, 1024)
 delta = global_delta(m, p, src, tgt)               # (1024,)
 Y = maps.shift(X, c, Delta, delta, lam=1.0, kappa=0.0)    # X: (T, 1024) frames, c: (T,) phone ids
 wav = vocoder(Y)
 ```
 
----
-
-## 6. Experiments
-
-Each script states its prediction in its docstring, writes a CSV and a figure
-to `results/`, and runs on the synthetic world with `--synthetic`.
-
-### E0 — the channel gate
-
-**Question.** Is WavLM → HiFi-GAN resynthesis clean before anything is edited?
-**Pass if** WER and speaker cosine stay close to the original and
-`results/e0_audio/` does not sound robotic. If it fails, no audio claim
-downstream means anything.
+### Run
 
 ```bash
-python -m experiments.e0_channel
-```
-
-### E1 — where accent lives, with the placebo of E3
-
-**Question.** How much variance does each term of the model carry, per layer?
-**Method.** Each component is a difference of three averaged inner products:
-the same speaker across two halves of their utterances, two speakers of the
-same accent, two speakers of different accents. Noise cancels, so the
-estimates are unbiased. The placebo shuffles accent labels across speakers.
-**Prediction.** accent × content is above its placebo band and peaks at
-phonetic layers.
-Also reports leave-one-speaker-out accent identification from the phone
-profile (conditional view) and from the speaker centre (global view).
-
-```bash
-python -m experiments.e1_variance
-```
-
-<p align="center"><img src="docs/fig_variance.png" width="860"><br>
-<em>Left: share of variance per term. Middle: accent × content against the same quantity with accent labels shuffled. Right: accent of an unseen speaker identified from the global and from the conditional view.</em></p>
-
-### E4 — how many speakers does a direction need?
-
-**Question.** How wrong is a delta estimated from $S$ speakers per accent?
-**Method.** Estimate it twice from disjoint speaker sets. Half their squared
-distance is the error; their inner product is the squared norm of the true
-delta.
-**Prediction.**
-
-```math
-\text{error}(S) \;=\; \frac{2}{S}\,\mathrm{tr}\,\Sigma
-\qquad
-\Sigma = \Sigma_u \text{ (speaker) for } \delta,
-\quad
-\Sigma = \Sigma_w \text{ (speaker} \times \text{content) for } \Delta_c
-```
-
-with both variances read from E1. A direction is usable once its error falls
-below its signal (dotted lines).
-
-```bash
-python -m experiments.e4_speaker_count
-```
-
-<p align="center"><img src="docs/fig_speaker_count.png" width="460"><br>
-<em>Points: measured. Lines: predicted from E1. Dotted: size of the true delta. A direction is usable to the right of where its line crosses its dotted level.</em></p>
-
-> [!NOTE]
-> L2-ARCTIC has 4 speakers per accent, so only $S = 1, 2$ can be measured. The
-> rest of the curve is the prediction until a corpus with more speakers per
-> accent is added (VCTK regional accents, Speech Accent Archive).
-
-### E2 — every map, on held-out speakers
-
-**Protocol.** Fold $f$ holds out the $f$-th speaker of every accent. The 20
-test utterances of the held-out native speaker are edited towards each of the
-6 accents with maps fitted on the other speakers, vocoded, encoded again and
-scored. Strengths 0.5, 1, 1.5, 2 give the sweep of E6; the `placebo` system is
-E3 in audio.
-
-| Column | Meaning |
-|---|---|
-| `accent`, `accent_hit` | cosine of the phone profile to the target accent; 1 if the target is the nearest accent |
-| `centre_shift` | how far the voice centre moved, in typical distances between speakers |
-| `profile_kept` | cosine between the speaker's personal phone profile after and before |
-| `speaker_cos` | ECAPA cosine to the original recording |
-| `wer` | Whisper word error rate |
-| `effort` | mean squared displacement of the edited frames |
-
-**Predictions.** Conditional beats global on accent. Translations beat
-barycentres on identity at equal accent. The placebo moves accent by nothing.
-
-```bash
-python -m experiments.e2_maps        # resumable; rows are appended to results/e2_maps.csv
-```
-
-<p align="center"><img src="docs/fig_strength.png" width="860"><br>
-<em>What strength does, for four maps (frames only, no vocoder).</em></p>
-
-<p align="center"><img src="docs/fig_scorecard.png" width="860"><br>
-<em>All maps at strength 1 (frames only, no vocoder).</em></p>
-
-### Running
-
-```bash
-# no data, laptop
-pip install numpy scipy pyyaml matplotlib pytest
-python -m pytest -q
-python -m experiments.e1_variance --synthetic
-
-# Colab, T4
 pip install -r requirements.txt
-# config.yaml: set l2_arctic, cmu_arctic; point cache/ at Google Drive
-python -m experiments.extract        # once, resumable, about 30 min
-python -m experiments.e0_channel
+# config.yaml: set l2_arctic; point cache/ at persistent storage
+python -m pytest -q                      # estimators against a world with known truth
+python -m experiments.extract            # once, GPU, resumable
+python -m experiments.e0_channel         # then listen to results/e0_audio
 python -m experiments.e1_variance
 python -m experiments.e4_speaker_count
-python -m experiments.e2_maps        # first look: strengths: [1.0], test_utts: 10
+python -m experiments.e2_maps            # resumable
 ```
 
-Data layout expected:
-`<l2_arctic>/<SPEAKER>/{wav,transcript,textgrid}/` (or
-`<l2_arctic>/<accent>/<SPEAKER>/...`) and
-`<cmu_arctic>/cmu_us_<spk>_arctic/{wav,lab,etc}/` for bdl, slt, clb, rms.
+Result tables and figures in `results/` are committed; audio is not.
+
+Every script also takes `--synthetic`, which replaces the corpus by
+`otaccent.synthetic.World`. That is a test of the code against known truth.
+Its output is not a result and must not be reported as one.
 
 ---
 
-## 7. Next steps
+## 8. What is verified
 
-```mermaid
-flowchart TD
-    S1["1. extract + E0<br/>does resynthesis sound clean?"] -->|yes| S2["2. E1 + E4<br/>is accent × content above placebo?"]
-    S1 -->|no| X1["paper becomes analysis only<br/>no audio claims"]
-    S2 -->|yes| S3["3. E2, quick then full<br/>listen to e2_audio"]
-    S2 -->|no| X2["claim is false<br/>write up the negative result"]
-    S3 --> S4["4. second opinions<br/>independent encoder, Sinkhorn, NAP"]
-    S4 --> S5["5. listening test"]
-    S5 --> S6["6. write"]
-```
+| Verified | How |
+|---|---|
+| Estimators recover known components; accent terms vanish under the placebo; $`\hat\Delta_c`$ is invariant to speaker translations; the error of a delta equals $2/S$ times the variance; a translation keeps centre and personal profile, a barycentre replaces them; editors are the identity at zero strength and spare silence | `python -m pytest`, 9 tests on a synthetic world |
+| `Encoder` returns exactly the frames of the kNN-VC fast path; both vocoders produce audio | one clip of real speech, CPU |
+| Resemblyzer wrapper | same clip: cosine between the original and its resynthesis 0.96 (plain vocoder) and 0.91 (prematched vocoder). One clip of one unknown speaker, not L2-ARCTIC |
+| `extract → e1 → e4 → e2` runs end to end with the real encoder and vocoder | a fabricated mini-corpus in the L2-ARCTIC layout: real audio, invented alignments |
 
-| # | Task | Who (proposed) | Done when |
-|---|---|---|---|
-| 1 | Download CMU ARCTIC (bdl, slt, clb, rms). Check that our L2-ARCTIC copy has `textgrid/`. Run `extract.py` and `e0_channel.py` on Colab. Fix the loaders if they miss. | rendei | `results/e0_channel.csv` exists and we have both listened to `e0_audio/` |
-| 2 | Run E1 and E4. | rendei | the two figures, on real data |
-| 3 | Run E2 with `strengths: [1.0]`, `test_utts: 10`; listen; then the full grid. | rendei | `e2_maps.csv`, `e2_frontier.pdf`, `e2_audio/` |
-| 4 | Port `EntropicOTMap` and full Bures–Wasserstein from `accent_l2/src/ot/frame_ot.py` as two more systems. Add HuBERT as an independent encoder for the accent score. Add the NAP classifier as a second accent metric. | rendei | three more rows in the E2 table |
-| 5 | Read PACE (arXiv:2609.22031) in full. Decide whether to reproduce it or place it in the table of section 4 with evidence. | Artem | a paragraph in Related Work we both agree with |
-| 6 | Listening test: reuse `HUMAN_EVAL_PROTOCOL.md` and the web form with systems `original`, `identity`, `global shift`, `conditional shift`, `conditional barycentre`. | both | pilot with 5–10 listeners |
-| 7 | Write. Figures come straight from `results/`. | Artem | draft in the Interspeech 2027 template |
-
-Not written yet, and not blocking: E5 (k-means units against canonical
-phones), E7 (durations by one-dimensional transport; the spec is in
-[section 10](#10-spec-for-e7-rhythm)), E9 (cascade demo), the speaker-count
-curve on a corpus with more speakers.
+| Not verified | Consequence |
+|---|---|
+| The loader on the real L2-ARCTIC `textgrid/` files | if `extract.py` finds nothing, look at `corpus.py` |
+| `metrics.Asr` and `metrics.Ecapa` | never run; `accent_l2/src/resynth/audio_metrics.py` has tested equivalents |
+| Every statement about accent | that is what the experiments are for |
 
 ---
 
-## 8. Decisions for the call
+## 9. Threats to validity
 
-Proposed answers to the open questions of the note of 3 Nov. To confirm or
-change together.
-
-| Question in the note | Proposal |
-|---|---|
-| 1. Which pipeline: units + XTTS, or our own resynthesis? | Neither. The frozen kNN-VC channel. Our decoder stays in `accent_l2` as a control. |
-| 2. Venue and main contribution | Interspeech 2027. The contribution is the account (why global fails, why retrieval loses the voice, the 1/S law, the placebo), then the frontier, then a small listening test. |
-| 3. Human-eval protocol | Keep the design. Change the systems (step 6). |
-| 7. Improve the decoder before human eval? | No. Drop it. Pilot only after E0 passes. |
-| 11. Position against PACE | Read it in full first (step 5). Working hypothesis: it is a barycentric editor, and Proposition 3 explains its trade-off. |
-| 12. Tempo and intonation | Durations as optional E7 in this paper if time allows. Pitch needs a vocoder with explicit F0: a separate work. |
-
-Open, to discuss:
-
-- Is native → accent the right main direction, or do we keep accent → accent
-  as a second table for comparison with the pilot and with PACE?
-- The accent score lives in the space we edit. Which independent encoder do we
-  trust: HuBERT-large, Whisper encoder, or the NAP classifier?
-- Four speakers per accent. Which corpus gives us the 1/S curve beyond S = 2?
-- **`native` is also a different corpus.** CMU ARCTIC was recorded elsewhere
-  and its phone labels come from a different aligner than L2-ARCTIC's. A
-  systematic difference in where boundaries are placed would look like an
-  accent × content effect, and the placebo cannot catch it. Two controls:
-  report E1 on the six L2 accents alone, and re-align CMU ARCTIC with the
-  aligner used for L2-ARCTIC (Montreal Forced Aligner).
+- **Four speakers per accent.** Accent and speaker are barely separable at
+  this size. E1 reports the leave-one-speaker-out range; E4 says how far the
+  estimates can be trusted; neither makes the sample larger.
+- **The accent score lives in the edited space.** It shows that an edit
+  survives the vocoder, not that it is accent to a listener or to another
+  model. An independent speaker-disjoint metric and E8 are required.
+- **Classifier-based accent evidence can be voice evidence.** A classifier
+  trained on the same speakers it is tested on may respond to the voice. This
+  applies to published numbers and would apply to ours.
+- **Alignment quality on accented speech.** Boundaries from a forced aligner
+  are less reliable for L2 speech; errors blur the profiles.
+- **Read speech, one sentence set.** Nothing here says anything about
+  spontaneous speech or other content.
+- **Priority.** The nearest group has the same channel, the same data, a
+  released per-state shift for voice conversion and a phoneme-aware accent
+  model, and names our direction as future work.
 
 ---
 
-## 9. What is checked, and what is not
+## 10. Timeline
 
-| Checked | How |
-|---|---|
-| The estimators and the propositions | `python -m pytest`: 9 tests on a synthetic world with known components |
-| The channel | on real speech, on CPU: `Encoder` returns exactly the frames of the kNN-VC fast path; both vocoders produce audio |
-| The pipeline | `extract → e1 → e4 → e2` end to end with the real encoder and vocoder, on a fabricated mini-corpus in the two layouts |
+Paper deadline: 9 February 2027 according to a tracker that reads the
+conference's dates page. To be confirmed on the official site.
 
-| Not checked | Consequence |
-|---|---|
-| Loaders on the real L2-ARCTIC and CMU ARCTIC | If `extract.py` finds no utterances, look at `corpus.py` first. The `textgrid/` alignments and the CMU `.lab` format are written from memory. |
-| `metrics.Asr`, `metrics.SpeakerEncoder` | E0 and the `wer`, `speaker_cos` columns of E2 have never run. `accent_l2/src/resynth/audio_metrics.py` is a tested alternative. |
-| Anything about accents | No real accented speech has been through this code. |
-
-Known limits of the measurements: the accent score is taken on WavLM layer 6
-after the vocoder round trip, so it shows that an edit survives resynthesis in
-the space where it was made; Whisper and ECAPA hear what a listener would, and
-neither replaces the listening test.
-
----
-
-## 10. Spec for E7: rhythm
-
-For rendei. Optional for the paper; start only after E0–E2 run on real data.
-Estimate: 2–3 days. Part A needs no GPU and decides whether part B is worth
-doing.
-
-### Why
-
-The frame edit of section 1 cannot change timing: a frame stays where it was.
-But accent is also rhythm: which phones are stretched, which are clipped.
-Phone durations are scalars, and in one dimension optimal transport is exact
-and non-trivial: it is the quantile map. This is the one place in the paper
-where transport does more than shift a mean.
-
-### The idea
-
-Treat the duration of a phone exactly as section 1 treats a frame.
-
-```math
-z \;=\; \log d \;-\; r_s ,
-\qquad
-r_s \;=\; \sum_c p_c \,\overline{\log d}_{s,c}
-```
-
-$d$ is the duration in seconds of one phone token, $r_s$ the speaker's own
-rate (the content-balanced mean, the analogue of the speaker centre). Tempo
-is part of the voice and must not move. Two maps, per phone $c$:
-
-```math
-\text{shift:}\quad z' = z + \lambda\,(m_{b,c} - m_{a,c})
-\qquad\qquad
-\text{quantile:}\quad z' = z + \lambda\,\bigl(F_{b,c}^{-1}(F_{a,c}(z)) - z\bigr)
-```
-
-with $m$ the mean and $F$ the distribution function of $z$ over the reference
-speakers of an accent. The new duration is $d' = \exp(r_s + z')$. The shift
-is the analogue of `conditional shift`; the quantile map is the full
-one-dimensional transport.
-
-### Part A: is there accent in durations at all? (no audio)
-
-The existing code works on durations unchanged: a duration table is a `Table`
-with `d = 1`, where a "frame" is one phone token and its value is
-$\log d$. This was checked on the synthetic world.
-
-1. `experiments/extract_durations.py`: read the alignments only (no audio, no
-   GPU), skip the shared test utterances exactly as `extract.py` does, and
-   save one array of tokens: speaker, phone, half, $\log d$. Durations come
-   from the alignment in seconds, not from frame counts.
-2. Build the `Table` with `TableBuilder(39, 1)` and run, as in E1 and E4:
-   `variance.components`, `variance.permutation_null`,
-   `metrics.loso_accent_id`, `variance.delta_error`.
-
-| Prediction | Refuted if |
-|---|---|
-| accent × content share of duration variance is above its placebo band | it is inside the band: **stop here**, report it in one sentence |
-| a held-out speaker's accent is identified from the duration profile above chance (1/7) | it is at chance |
-| the error of the duration delta falls as 2/S × the speaker × content variance | — |
-
-**Output:** `results/e7_duration_variance.csv`, one figure in the style of E1.
-
-### Part B: move the durations, in audio
-
-New file `otaccent/durations.py`, about 80 lines:
-
-```python
-def runs(labels):
-    """Phone segments of a frame-label sequence: [(phone, first_frame, n_frames)]."""
-
-def fit_quantile(z, phone, speakers_a, speakers_b, n_quantiles=51, min_tokens=50):
-    """(K, n_quantiles) quantile grids of the two accents; a phone with too few tokens maps to itself."""
-
-def new_durations(z, phone, grids=None, shift=None, lam=1.0):
-    """z' for every token: quantile map via np.interp on the grids, or the shift."""
-
-def warp(frames, labels, ratio):
-    """Time-warp an utterance. `ratio[i]` is new/old duration of segment i.
-    One monotone piecewise-linear time map over the whole utterance; frames are
-    linearly interpolated along it; labels are carried by nearest neighbour.
-    Returns (frames', labels')."""
-```
-
-Then `experiments/e7_durations.py`, on the protocol of E2 (same folds, same
-test utterances, differences to identity):
-
-| System | Frames | Durations |
+| Weeks | Work | Gate |
 |---|---|---|
-| `identity` | — | — |
-| `conditional shift` | shift | — |
-| `durations (shift)` | — | shift |
-| `durations (quantile)` | — | quantile |
-| `conditional shift + durations (quantile)` | shift | quantile |
+| 1 (to 18 Nov) | Read PACE, StateVC, the phoneme-aware identification paper and MKL-VC in full. `extract.py` and R0 on L2-ARCTIC. | resynthesis is clean |
+| 2–3 (to 2 Dec) | R1. E1 and E4. | accent × phone above placebo, or stop |
+| 4–5 (to 16 Dec) | E2 on all pairs; independent accent metric; listen ourselves. | the shift beats the placebo after the vocoder |
+| 6–7 (to 30 Dec) | Fix what fails; ablations; freeze systems; prepare E8. | systems frozen |
+| 8–9 (to 13 Jan) | E8: pilot, then full. | listener data in |
+| 10–12 (to 8 Feb) | Write, internal review, demo page, submit. | |
 
-Order of operations: edit the frames, then warp, then vocode. The two commute
-because the frame edit depends only on the label.
-
-**Measure:** WER, speaker cosine, `profile_kept` (with the warped labels), and
-the duration-profile cosine to the target accent, computed from the durations
-we imposed. **Listen** to fold 0 before trusting any number.
-
-| Prediction | Refuted if |
-|---|---|
-| on held-out speakers the transported durations are closer to the target accent's profile; quantile is at least as close as shift | no gain over identity |
-| warping costs little: WER and speaker cosine stay near those of `conditional shift` alone | WER rises sharply even with the clamp below |
-| in the listening test, accent similarity is higher with durations than without | no difference: rhythm does not matter at this scale, say so |
-
-### Rules that are easy to get wrong
-
-- **Silence is not touched.** Pauses carry accent too, but not in version 1.
-- **Clamp** every ratio to [0.5, 2] and keep at least one frame per segment.
-- **Rounding:** let the continuous time map decide the output length; do not
-  round segment by segment, the errors add up.
-- **Rate is content-balanced.** $r_s$ is the $p$-weighted mean over phones of
-  the per-phone means, not the raw mean over tokens. Otherwise a speaker who
-  happens to say more long vowels looks slow.
-- **Same aligner on both sides.** For durations the corpus confound of
-  section 8 is fatal: boundaries from two different aligners are not
-  comparable. Run E7 on accent → accent pairs inside L2-ARCTIC, or re-align
-  CMU ARCTIC first.
-- **Interpolated frames are a guess.** kNN-VC rescales duration by linear
-  interpolation of frames too, but it then matches them to real frames; here
-  they go straight to the vocoder. If stretched phones sound smeared, repeat
-  frames instead of interpolating and compare.
-
-### Tests to write first
-
-On the synthetic world with `dim=1`:
-
-1. the quantile map sends the source sample onto the target sample (sorted values agree);
-2. `lam = 0` is the identity for both maps;
-3. `warp` with all ratios 1 returns the input; with ratio 2 everywhere the length doubles; the time map is monotone;
-4. the shift map leaves the speaker's rate $r_s$ unchanged.
-
-### Done when
-
-- [ ] the tests pass
-- [ ] part A figure on real data, and a decision: go or stop
-- [ ] `results/e7_durations.csv` with the five systems
-- [ ] audio of fold 0 in `results/e7_audio/`, listened to by both of us
-- [ ] three sentences for the paper: what was predicted, what was found, what it costs
-
+Introduction, related work and section 3 can be written from week 1.

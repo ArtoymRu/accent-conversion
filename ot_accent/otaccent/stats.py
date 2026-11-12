@@ -34,6 +34,10 @@ class Table:
         return np.array([i for i, (s, a) in enumerate(zip(self.speakers, self.accents))
                          if a == accent and s not in exclude])
 
+    def subset(self, keep) -> "Table":
+        """The table restricted to some speakers (indices or a boolean mask)."""
+        return Table(self.speakers[keep], self.accents[keep], self.n[keep], self.sx[keep], self.sxx[keep])
+
     def save(self, path):
         np.savez_compressed(path, **self.__dict__)
 
